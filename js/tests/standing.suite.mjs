@@ -28,7 +28,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createServer } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test as nodeTest } from "node:test";
@@ -39,6 +39,7 @@ import { BUILT_BRIDGE } from "./built.mjs";
 import { clockNotice } from "./clock-notices.mjs";
 import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
+import { FIVE, snapshot } from "./open-cards-fixture.mjs";
 import {
   ack,
   addressed,
@@ -4019,6 +4020,44 @@ for (const sub of ["watchdog", "watchdog-exit", "watchdog-codex"])
     await waitFor(() => output().includes("cards-watch-body"), "the carrier body");
     assert.match(output(), /карточек без ответа: 2; старшая с 2026-11-10T12:00:00Z/);
   });
+
+// Карточки снимка (#11419): на проводе пять — на сокете места те же пять, в ходе каждая названа.
+test("five cards of the snapshot reach the seat socket as sent and the turn names each", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const sockFile = readdirSync(standings).find((f) => f.endsWith(".sock"));
+  const door = createConnection(join(standings, sockFile));
+  const events = [];
+  let buf = "";
+  door.setEncoding("utf8").on("data", (c) => {
+    const lines = (buf + c).split("\n");
+    buf = lines.pop();
+    for (const l of lines) if (l.trim()) events.push(JSON.parse(l));
+  });
+  const wd = runClient("watchdog", dir, key, 15_000);
+  t.after(async () => {
+    door.destroy();
+    wd.proc.kill("SIGKILL");
+    await wd.done;
+  });
+  await waitFor(() => /слушаю стояние/.test(wd.out + wd.err), "the watchdog to attach");
+  const f = answer(993, 992, ME, {});
+  f.my_open_cards = snapshot();
+  f.line.done = "cards-items-body";
+  f.body = f.line.done;
+  await sendRoom(fake, f);
+  const carried = () =>
+    events.find((e) => e.kind === "frame" && String(e.raw ?? "").includes("cards-items-body"));
+  await waitFor(carried, "the carrier on the seat socket");
+  const onSocket = JSON.parse(carried().raw).my_open_cards;
+  assert.deepEqual(onSocket.items, FIVE, "the socket carries the same five");
+  await waitFor(() => wd.out.includes("cards-items-body"), "the carrier in the turn");
+  const turn = wd.out.replace(/\s+/g, "");
+  for (const c of FIVE)
+    for (const fact of [`№${c.room.number}[${c.entry_id}]`, c.key, c.asked_at])
+      assert.ok(turn.includes(fact), `${fact} missing from the turn: ${wd.out}`);
+  assert.ok(turn.includes("@asker:seat-1(роль901)"), wd.out);
+});
 
 test("the built bridge renders a person's answer with one author, reference and body", async (t) => {
   const { fake, dir, key } = await connected(t);

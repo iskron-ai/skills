@@ -481,6 +481,28 @@ test("doctor survives an unreadable config on the way up and keeps strings intac
   }
 });
 
+// Песочница харнеса запрещает чужой дом (EPERM, граф @nks/nks-dev, узел #11417): чтение
+// падает при existsSync истинном. Каталог с именем файла падает так же (EISDIR) и под root.
+test("doctor survives an unreadable Codex config.toml and OpenCode plugin copy, and reports to the end", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  try {
+    const codexHome = join(home, "cxh");
+    mkdirSync(join(codexHome, "config.toml"), { recursive: true });
+    mkdirSync(join(home, ".config", "opencode", "plugins", "iskron.js"), { recursive: true });
+    const r = await run(["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")], {
+      HOME: home,
+      CODEX_HOME: codexHome,
+    });
+    assert.equal(r.code, 0, `doctor must not crash: ${r.err}`);
+    assert.match(r.out, /Codex: \S*config\.toml не читается/, r.out);
+    assert.match(r.out, /OpenCode: \S*iskron\.js не читается/, r.out);
+    assert.match(r.out, /скиллы:/, `the sections after the harnesses must come: ${r.out}`);
+  } finally {
+    await fake.stop();
+  }
+});
+
 test("doctor with a personal access token names its source and judges it by a live handshake", async () => {
   const fake = await startFakeNks({ pat: "nks_pat_doc" });
   const dir = mkdtempSync(join(tmpdir(), "iskron-doctor-pat-"));
