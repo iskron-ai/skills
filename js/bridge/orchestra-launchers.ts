@@ -19,6 +19,7 @@ import { parseClone } from "./orchestra-clone.ts";
 import { parseHarnesses } from "./orchestra-harnesses.ts";
 import type { Adapter, Launcher, Launchers } from "./orchestra-launcher-types.ts";
 import { throughGate } from "./returngate.ts";
+import { throughWindow } from "./windowfetch.ts";
 export type { HarnessOffer, Launcher, Launchers } from "./orchestra-launcher-types.ts";
 
 const SLICE = "slice:orchestra";
@@ -90,7 +91,7 @@ export function parseLauncher(raw: string): Launcher | { code: string; launcher?
 
 /** The descriptions as they lie in mind; a failed read throws — the tact raises nothing. */
 export async function readLaunchers(serverUrl: string, token: string): Promise<Launchers> {
-  const s = mcpSession(serverUrl, token, "orchestra");
+  const s = mcpSession(serverUrl, token, "orchestra", throughWindow); // the down window (#11375)
   const out: Launchers = { account: "", own: new Map(), elsewhere: new Map(), refused: [] };
   const here = hostname().toLowerCase();
   try {

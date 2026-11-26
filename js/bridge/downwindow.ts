@@ -15,8 +15,9 @@
 // judging and failing one call; a 429 is the server's pacing (ratelimit.ts).
 //
 // Machine-wide means every bridge on the grant directory (`--auth-dir`): the record is keyed
-// by server like the grant itself (store.ts). Only knocks that go through transport.ts `post`
-// consult the window; a caller with its own HTTP request does not. Nothing stands guard
+// by server like the grant itself (store.ts). Knocks consult the window through transport.ts
+// `post`, and the orchestrator's own short MCP session through windowfetch.ts; any other
+// caller with its own HTTP request does not. Nothing stands guard
 // between calls: the next knock after the window is the probe, so a machine that calls
 // nobody knocks nobody.
 import { envName } from "../delivery/index.ts";
@@ -121,6 +122,18 @@ export function failed(knock: Knock, retryAfterMs: number): number {
 
 /** The front line's own statuses for a server that is down behind it. */
 export const DOWN_HTTP = new Set([502, 503, 504]);
+
+/**
+ * A connection that was never established: the server never saw the call (Bun, which OpenCode
+ * runs the bridge on, names both a refused port and an unknown host ConnectionRefused).
+ */
+export const NEVER_LEFT = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ERR_SOCKET_BAD_PORT",
+  "ConnectionRefused",
+]);
 
 /**
  * The server's Retry-After: delay-seconds, an HTTP-date, or the refusal view's own

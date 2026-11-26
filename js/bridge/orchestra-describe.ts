@@ -12,6 +12,7 @@ import { mcpSession } from "../shared/mcpsession.ts";
 import { nodeBody } from "./node-body.ts";
 import { LAUNCHER_MAX, parseLauncher } from "./orchestra-launchers.ts";
 import { throughGate } from "./returngate.ts";
+import { throughWindow } from "./windowfetch.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
 
@@ -74,7 +75,7 @@ export async function ensureLauncher(
   if (spec.launcher.length > LAUNCHER_MAX)
     throw new Error(w().describeTooLong(spec.launcher, LAUNCHER_MAX));
   if (!serverUrl || !token) throw new Error(w().describeFailed(spec.launcher, "no key"));
-  const s = mcpSession(serverUrl, token, "orchestra");
+  const s = mcpSession(serverUrl, token, "orchestra", throughWindow); // the down window (#11375)
   try {
     await throughGate(serverUrl, () => s.open(), "open"); // every upstream initialize (#11375)
     const found = await s.call(tool("search"), {

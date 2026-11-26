@@ -11,6 +11,7 @@ import {
   DOWN_HTTP,
   downHttp,
   failed,
+  NEVER_LEFT,
   retryAfterMs,
 } from "./downwindow.ts";
 import { closedUnder, DownError, errorCode, errorMessage, UpstreamError } from "./errors.ts";
@@ -228,19 +229,8 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
           : "");
     // A connection that was never established carries nothing: the server never
     // saw the call. A timeout is the opposite — the request was on the wire and
-    // only the answer is missing, so the write may well have landed. Bun (the
-    // runtime OpenCode runs the bridge on) names both a refused port and an
-    // unknown host ConnectionRefused.
-    const neverLeft =
-      !timedOut &&
-      (tls ||
-        [
-          "ECONNREFUSED",
-          "ENOTFOUND",
-          "EAI_AGAIN",
-          "ERR_SOCKET_BAD_PORT",
-          "ConnectionRefused",
-        ].includes(code ?? ""));
+    // only the answer is missing, so the write may well have landed (NEVER_LEFT, downwindow.ts).
+    const neverLeft = !timedOut && (tls || NEVER_LEFT.has(code ?? ""));
     // A timeout already spent the whole deadline: repeating it multiplies the
     // wait, so only a connection that failed outright is worth another knock —
     // and not a certificate refusal, which fails the same way every time.
