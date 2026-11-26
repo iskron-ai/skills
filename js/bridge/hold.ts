@@ -236,10 +236,10 @@ export function releaseStanding(
   ended = false,
 ): void {
   if (forget && H.currentKey) dropOwnHoldRecord(H.currentKey, H.currentUrl);
-  if (!keepBeside) dropAllExtras(reason, forget, own);
+  if (!keepBeside) dropAllExtras(reason, forget, own, ended);
   if (!H.holder && !H.door) return;
-  // An unsent batch leaves now instead of being lost silently (backlog.ts).
-  H.door?.flushBatches();
+  // An unsent batch leaves now instead of being lost silently (backlog.ts); at the end — no one's.
+  void (ended ? H.door?.dropBatches() : H.door?.flushBatches());
   const key = H.currentKey ?? undefined;
   const handover = handoverReason();
   if (handover && !forget) {

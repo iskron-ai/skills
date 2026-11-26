@@ -5575,6 +5575,82 @@ test("watchdog under Monitor at the agent's end: no line on stdout after the end
   assert.match(wd.err, /сессия агента кончена/);
 });
 
+// Review №5823 [97] п.2: a seat beside in another graph gets the end flag too — on the former
+// build its watchdog got `own` without `ended`, and its flush and last word woke the ended session.
+test("the agent's end with a main seat and a seat beside: neither watchdog prints anything after, both exit 0", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const rb = await bridge.call("tools/call", 9, {
+    name: "iskron_stand",
+    arguments: { realm: "drugoy", karta: 48, name: "proba" },
+  });
+  const besideText = (rb.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.ok(!rb.result?.isError, besideText);
+  const besideKey = /watchdog (\S+)/.exec(besideText)?.[1];
+  assert.ok(besideKey && besideKey !== key, `the seat beside's key: ${besideText}`);
+  const main = runClient("watchdog", dir, key, 15_000);
+  const beside = runClient("watchdog", dir, besideKey, 15_000);
+  for (const w of [main, beside])
+    await waitFor(() => w.out.includes("слушаю стояние"), "the watchdogs to attach");
+  await sendRoom(fake, progress(52));
+  await new Promise((r) => setTimeout(r, 500));
+  const before = [main.out, beside.out];
+  const reply = await bridge.call("iskron/end", 10, {});
+  assert.equal(reply.result?.ended, true, JSON.stringify(reply));
+  const [rm, rs] = await Promise.all([main.done, beside.done]);
+  assert.equal(rm.exit, 0, `main:\n${main.out}\n${main.err}`);
+  assert.equal(rs.exit, 0, `beside:\n${beside.out}\n${beside.err}`);
+  assert.equal(main.out, before[0], `the main seat's watchdog printed after the end:\n${main.out}`);
+  assert.equal(beside.out, before[1], `the beside watchdog printed after the end:\n${beside.out}`);
+});
+
+// Review №5823 [97] п.3: with the Codex door already open, the flush ran before released(ended)
+// and put() sent turn/start before the watchdog read the end flag. Now: the end, no flush.
+test("watchdog-codex with its door already open at the agent's end: no turn/start after the end", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = codexHome(t);
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+  );
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-open",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "message",
+      id: "open-1",
+      body: "открой дверь",
+      provenance: {},
+    }),
+  });
+  const turns = () => (readFileSync(log, "utf8").match(/turn\/start/g) ?? []).length;
+  await waitFor(() => turns() === 1, "the door open: one turn");
+  // A deferred word to the seat: held by the window; a flush would put it into the thread.
+  await sendRoom(
+    fake,
+    roomFrame("said", { entry_id: 53, stack: "defer", envelope: { addressee: ME }, body: "Т-53" }),
+  );
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(turns(), 1, "the batch is still held");
+  const reply = await bridge.call("iskron/end", 11, {});
+  assert.equal(reply.result?.ended, true, JSON.stringify(reply));
+  const r = await wd.done;
+  assert.equal(r.exit, 0, wd.err);
+  await new Promise((r2) => setTimeout(r2, 300));
+  assert.equal(turns(), 1, `no turn/start after the end:\n${readFileSync(log, "utf8")}`);
+});
+
 // Дверь приняла сокет и молчит на upgrade: ожидание пачки на своём отпускании —
 // с пределом, по нему одна громкая строка и ненулевой выход, не вечное молчание.
 test("watchdog-codex on one's own close behind a door that never answers the upgrade exits loudly within the limit", async (t) => {
