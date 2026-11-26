@@ -62,7 +62,24 @@ export const state = scoped(() => ({
   sessionToken: null as string | null,
   // The last session id the server answered 404 for: it is gone there, closing it is moot (#9174).
   goneSession: null as string | null,
+  // The session that came back through the machine's return gate: its further returns are its tail (#11413).
+  returned: null as string | null,
 }));
+
+/**
+ * A knock of this session's return through the machine's gate (returngate.ts, #11375). A
+ * session that already came back through it does not wait again (#11413): its re-registration
+ * or board read goes as the return's tail — still behind a probe out for the server. `opens` —
+ * the knock opens a new session (an initialize): never a tail. The session the knock leaves is
+ * marked as come back; the mark goes with the session — its next 404 or reopen drops it.
+ */
+export async function throughReturn<T>(knock: () => Promise<T>, opens = false): Promise<T> {
+  const back = !opens && !!state.sessionId && state.returned === state.sessionId;
+  const got = await throughGate(CFG.serverUrl, knock, back ? "tail" : "return");
+  // A session a sibling's 404 already lost meanwhile earns no mark.
+  state.returned = state.sessionId === state.goneSession ? null : state.sessionId;
+  return got;
+}
 
 /**
  * Let go of the held session: forget it here and close it upstream (sessionclose.ts,
@@ -72,6 +89,7 @@ export function letGo(why: string): Promise<void> {
   const id = state.sessionId;
   state.sessionId = null;
   state.sessionToken = null;
+  state.returned = null; // the mark belongs to the return that earned it (#11413)
   if (!id || id === state.goneSession) return Promise.resolve();
   return closeSession({ id, token: bearer(), protocolVersion: state.protocolVersion }, why);
 }
@@ -274,6 +292,8 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
   if (res.status === 404 && sentSession) {
     res.body?.cancel?.();
     state.goneSession = sentSession;
+    // Lost again: its next knock is a return through the gate, not the last return's tail (#11413).
+    if (state.returned === sentSession) state.returned = null;
     throw new UpstreamError("session expired upstream", "session", null, UpstreamError.NOT_SENT);
   }
   const sid = res.headers.get("mcp-session-id");
@@ -363,10 +383,12 @@ export async function reinitialize(): Promise<void> {
       const id = `${ID_PREFIX}bridge-reinit-${++state.reinitCounter}`;
       let result: JsonRpcMessage | null = null;
       // One probe per machine, the rest spread after it (returngate.ts, #11375).
-      await throughGate(CFG.serverUrl, () =>
-        post({ jsonrpc: "2.0", id, method: "initialize", params: state.initParams }, (m) => {
-          if (m.id === id) result = m;
-        }),
+      await throughReturn(
+        () =>
+          post({ jsonrpc: "2.0", id, method: "initialize", params: state.initParams }, (m) => {
+            if (m.id === id) result = m;
+          }),
+        true,
       );
       const got = result as JsonRpcMessage | null;
       if (!got || got.error) {
