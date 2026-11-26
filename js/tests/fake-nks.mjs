@@ -189,6 +189,10 @@ export async function startFakeNks(opts = {}) {
     listChangedOn: null,
     listChangedSent: [], // метод каждого запроса, в чьём ответе ушло уведомление
     initSids: [], // Mcp-Session-Id каждого рукопожатия, как пришло (null — без заголовка)
+    initAt: [], // мгновение каждого рукопожатия
+    registerAt: [], // мгновение каждого register места
+    initDelayMs: 0,
+    initRefuse: null,
     // Закрытие сессии клиентом (спека MCP, DELETE с её id; #9174): каждый DELETE как пришёл.
     deletes: [],
     // Кто спрашивал (#9972): метод, путь и user-agent каждого запроса и апгрейда, кроме
@@ -749,8 +753,18 @@ export async function startFakeNks(opts = {}) {
         return req.socket.destroy();
       }
       if (st.statusGone) return json(res, 404, { error: "no such standing" }); // адрес повернул чужой connect
+      // Канал жив, живого места на нём нет (api: правило no_live_standing, ProblemDetail) — столько
+      // ближайших POST статуса; потом поверхность принимает строку.
+      if (st.noLiveStanding > 0) {
+        st.noLiveStanding--;
+        return json(res, 404, {
+          title: "Not Found",
+          errors: [{ rule: "no_live_standing", message: "the channel has no live standing" }],
+        });
+      }
       // opts.statusRotates: статусный адрес прежнего сокета места после чужого connect — 404, как его адрес сокета.
       const statusToken = p.slice("/channel/status/".length);
+      st.lastStatusToken = statusToken; // какой адрес получил последний POST статуса — читают пробы
       const statusName = st.wsTokens.get(statusToken);
       if (
         opts.statusRotates &&
@@ -819,7 +833,8 @@ export async function startFakeNks(opts = {}) {
       if (patch.raised_release) for (const r of st.raisedRelease.splice(0)) r();
       if (Number.isInteger(patch.ws_refuse)) st.wsRefuse = patch.ws_refuse; // один раз: следующий апгрейд закрывается этим кодом, дальнейшие принимаются
       if ("turned_404" in patch) st.turned404 = !!patch.turned_404;
-      if (patch.ws_mute) st.wsMute = true; // один раз: следующий апгрейд принят, но hello не идёт — служба медлит
+      // Столько следующих апгрейдов (true — один) принято, но hello не идёт — служба медлит.
+      if (patch.ws_mute) st.wsMute = Number.isInteger(patch.ws_mute) ? patch.ws_mute : 1;
       if (Number.isInteger(patch.ws_close)) {
         // ws_close_reason: причина закрытия (#7492 — «revoked:person», «revoked:self»).
         const why = Buffer.from(String(patch.ws_close_reason ?? ""));
@@ -893,6 +908,7 @@ export async function startFakeNks(opts = {}) {
         "standingRefuseNext",
         "standingSeatGoneNext",
         "registerConcurrentNext", // столько ближайших register отказать гонкой открытия (409 без rule)
+        "registerConcurrentOnce", // ["karta:name"]: первый register каждого из этих мест — гонка открытия, один раз
         "registerNoId", // ответ register без standing_id — id места мосту не известен
         "helloNoIds", // hello без standing_id мест — с registerNoId мост своего id не узнаёт вовсе
         "registerStandsInRealmNext", // столько ближайших register отказать 409 channel_already_stands_in_realm (английский текст api)
@@ -910,6 +926,7 @@ export async function startFakeNks(opts = {}) {
         "helloPending", // what the next hello says was waiting in the queue
         "statusDelayMs", // hold the status POST open this long before answering
         "statusDrop", // close the connection under this many next status POSTs
+        "noLiveStanding", // this many next status POSTs answer 404 no_live_standing (ProblemDetail)
         "statusTrim", // a line over 64 is trimmed by word and answered 200 with warnings[] (api 0.108.0)
         "statusNormalize", // the server squeezes whitespace and names the line in doing, without a warning
         "mcpDrop", // close the connection under this many next MCP POSTs (with mcpDropAction — only of that action)
@@ -922,6 +939,9 @@ export async function startFakeNks(opts = {}) {
         "registerToolDelayMs", // hold the iskron_channel register tool open this long (возврат места при переподхвате)
         "listChangedOn",
         "listError", // tools/list отвечает ошибкой JSON-RPC (сервер снимает пометку и так, #6817)
+        "initDelayMs", // каждое рукопожатие отвечает на столько позже: видно, сколько их в полёте
+        "standingRegisterDelayMs", // каждый register места ложится на столько позже
+        "initRefuse", // { status, retryAfter } — рукопожатие отвечает этим (502/503/504 — сервер лёг)
       ]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -978,6 +998,8 @@ export async function startFakeNks(opts = {}) {
       if ("case_join_delay_ms" in patch) st.caseJoinDelayMs = Number(patch.case_join_delay_ms) || 0; // медленный вход в дело
       if ("send_conflict" in patch) st.sendConflict = patch.send_conflict || null; // текст отказа 409 не о безавторности
       if ("statusGone" in patch) st.statusGone = !!patch.statusGone; // статусный адрес повернули
+      if ("noLiveStanding" in patch)
+        st.noLiveStanding = Math.max(0, Number(patch.noLiveStanding) | 0); // канал жив, живого места нет
       if (patch.revoke_access) st.access = null;
       if (patch.rotate_access) st.access = mintAccess(st); // сосед провернул грант: старый bearer больше не принимается
       if (patch.drop_standings) st.standings.clear(); // платформа потеряла привязки при живых сессиях mcp
@@ -1201,6 +1223,10 @@ export async function startFakeNks(opts = {}) {
       const sid = req.headers["mcp-session-id"] ?? null;
       const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
       st.deletes.push({ sid, bearer, protocol: req.headers["mcp-protocol-version"] ?? null });
+      // DELETEs in flight and their peak (a probe resets it).
+      st.deleteOut = (st.deleteOut ?? 0) + 1;
+      st.deletePeak = Math.max(st.deletePeak ?? 0, st.deleteOut);
+      res.once("close", () => st.deleteOut--);
       if (st.deleteHangMs) await new Promise((r) => setTimeout(r, st.deleteHangMs));
       if (st.deleteStatus) {
         res.writeHead(st.deleteStatus);
@@ -1278,7 +1304,18 @@ export async function startFakeNks(opts = {}) {
         st.dead.add(sid);
         st.sessions.delete(sid); // credential сменился — сессия закрыта
       }
-      if (msg.method === "initialize") st.initSids.push(sid ?? null); // с каким id пришло рукопожатие
+      if (msg.method === "initialize") {
+        st.initSids.push(sid ?? null); // с каким id пришло рукопожатие
+        st.initAt.push(Date.now()); // когда: ворота возврата машины судятся по этим мгновениям
+        if (st.initRefuse) {
+          res.writeHead(st.initRefuse.status, {
+            "content-type": "text/plain",
+            "retry-after": String(st.initRefuse.retryAfter ?? 1),
+          });
+          return res.end("upstream down");
+        }
+        if (st.initDelayMs) await new Promise((r) => setTimeout(r, st.initDelayMs));
+      }
       if (sid && st.dead.has(sid) && msg.method === "initialize") {
         // Как на бою: рукопожатие под закрытой сессией — 404 unknown_session, сколько
         // бы клиент его ни повторял; клиент обязан забыть id (спека MCP).
@@ -1460,6 +1497,10 @@ export async function startFakeNks(opts = {}) {
           );
         }
         if (a.action === "register") {
+          // Registers in flight, refused ones included, and their peak (a probe resets it).
+          st.registerOut = (st.registerOut ?? 0) + 1;
+          st.registerPeak = Math.max(st.registerPeak ?? 0, st.registerOut);
+          res.once("close", () => st.registerOut--);
           if (st.registerToolGate) await st.registerToolGate;
           if (st.registerToolDelayMs)
             await new Promise((r) => setTimeout(r, st.registerToolDelayMs));
@@ -1534,8 +1575,13 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
-          if (st.registerConcurrentNext > 0) {
-            st.registerConcurrentNext--;
+          // Once per named seat, whatever the order the registers come in (a probe without a race).
+          const onceAt = (st.registerConcurrentOnce ?? []).indexOf(
+            `${String(a.karta).trim().replace(/^#/, "")}:${String(a.name ?? "").trim()}`,
+          );
+          if (onceAt >= 0) st.registerConcurrentOnce.splice(onceAt, 1);
+          if (onceAt >= 0 || st.registerConcurrentNext > 0) {
+            if (onceAt < 0) st.registerConcurrentNext--;
             st.counts.register_concurrent = (st.counts.register_concurrent ?? 0) + 1;
             // Гонка открытия места у api: 409 без rule — «register again».
             return json(
@@ -1598,6 +1644,7 @@ export async function startFakeNks(opts = {}) {
             await new Promise((r) => setTimeout(r, st.standingRegisterDelayMs));
           st.placeAttrs.set(regKey, a.attrs);
           st.counts.register_standing++;
+          st.registerAt.push(Date.now()); // когда: перерегистрация машины судится по мгновениям
           st.placeArgs.push({
             action: "register",
             name: a.name,
@@ -1666,6 +1713,11 @@ export async function startFakeNks(opts = {}) {
         }
         if (a.action === "list") {
           st.counts.list++;
+          // Board reads in flight and their peak (a probe resets it), with the instant of each.
+          st.listOut = (st.listOut ?? 0) + 1;
+          st.listPeak = Math.max(st.listPeak ?? 0, st.listOut);
+          (st.listAt ??= []).push(Date.now());
+          res.once("close", () => st.listOut--);
           // Медленная доска: окно, в котором несколько мостов читают её до чужого connect.
           if (st.listDelayMs) await new Promise((r) => setTimeout(r, st.listDelayMs));
           const byKarta =
@@ -2286,6 +2338,12 @@ export async function startFakeNks(opts = {}) {
       if (mindCall) {
         const m = st.mind;
         const rules = m?.rules ?? [];
+        // { delayMs } — медленный сервер: поиск среза отвечает на столько позже.
+        if (msg.params.name === "iskron_search" && m?.delayMs)
+          await new Promise((r) => setTimeout(r, m.delayMs));
+        // { whoamiDelayMs } — whoami отвечает на столько позже: медленна уже первая ступень чтения.
+        if (msg.params.name === "iskron_me" && m?.whoamiDelayMs)
+          await new Promise((r) => setTimeout(r, m.whoamiDelayMs));
         if (msg.params.name === "iskron_search" && m?.refuse)
           return json(
             res,
@@ -2575,8 +2633,8 @@ export async function startFakeNks(opts = {}) {
       if (!stillHeld) for (const pl of st.places.values()) if (ofPlace(pl)) pl.listening = false;
     });
     socket.on("error", () => st.ws.delete(socket));
-    if (st.wsMute) {
-      st.wsMute = false;
+    if (st.wsMute > 0) {
+      st.wsMute--;
       return; // сокет открыт, hello нет — возврат с диска не дождётся доказательства слуха
     }
     socket.write(
