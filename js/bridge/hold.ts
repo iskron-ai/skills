@@ -224,9 +224,8 @@ const held = (): Place | null =>
  * Release everything held: service socket, doors, publication. Idempotent.
  * `forget` also drops hold records (revoke, dead token). `keepBeside`: the same channel
  * reopens and places beside stay on it. `own`: the session's own close, revoke or leave;
- * released carries own and watchdogs leave without alarm (#6638).
- * `keepBusy`: a paused place (suspend.ts); a handed socket not taken by a successor keeps busy.
- * `ended`: the agent's session ended — released carries it, watchdogs open no turn more.
+ * released carries own and watchdogs leave without alarm (#6638); `ended` — the agent's session
+ * ended: watchdogs open no turn more. `keepBusy`: a paused place (suspend.ts).
  */
 export function releaseStanding(
   reason: string,
@@ -432,6 +431,7 @@ function openHolder(url: string, key: string): void {
       onDropped: expectHello,
       onFrame: function onFrame(raw, frame) {
         void Promise.resolve(stampOrigin(frame)).then((full) => {
+          if (full?.type === "life_check") return E.life?.(full); // the bridge answers, no turn (lifeanswer.ts)
           if (full?.type === "standing_ended") return E.stop?.(key, 0, "", full); // one seat taken off (stophold.ts)
           if (E.order?.(url, full)) return; // a stop frame is the bridge's, never the agent's (stoporder.ts)
           const primary = held();

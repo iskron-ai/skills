@@ -84,6 +84,11 @@ const everything = () =>
     event("frame", { frame: frame("слово"), raw: "" }),
     event("stale", { pending: 1, frames: [{ id: "msg-1" }], text: "хвост: слово" }),
     event("backlog", { pending: 1, frames: [{ id: "w1" }], text: "Побудка: кадров 1\n\nпервое" }),
+    // The platform's old life-check wake (lifecheck.ts) — it stays, behind the same gate.
+    event("frame", {
+      frame: { type: "message", id: "lc-1", body: "жив?", provenance: { wake: "life_check" } },
+      raw: "",
+    }),
     event("alive", { version: "9" }),
     event("dead", { code: "4001" }),
     event("evicted", { code: "4002" }),

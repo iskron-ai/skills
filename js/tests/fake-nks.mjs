@@ -308,6 +308,7 @@ export async function startFakeNks(opts = {}) {
     places: new Map(), // "karta:name" → { karta, name, incoming }
     hung: new Set(), // сокеты, в которые служба перестала писать (/control {ws_hang})
     pulses: [], // { at, place, frame } — кадры pulse, присланные мостом по сокету (#7529)
+    lives: [], // { at, place, frame } — answers {type:"life"} to the server's life_check (#11362)
     placeAttrs: new Map(), // "karta:name" → attrs места, последние принятые; переживают revoke (#6401)
     closedPlaces: new Set(), // "karta:name" снятых revoke: register по ним — 404
     placeArgs: [], // поля места, которые фейк ПРИНЯЛ у connect/mint/register (#5174) — после отсева по схеме; посланное — в calls
@@ -2556,6 +2557,7 @@ export async function startFakeNks(opts = {}) {
           frame = JSON.parse(f.payload.toString("utf8"));
         } catch {}
         if (frame?.type === "pulse") st.pulses.push({ at: Date.now(), place: placeName, frame });
+        if (frame?.type === "life") st.lives.push({ at: Date.now(), place: placeName, frame });
       }
     });
     socket.on("end", () => socket.destroy()); // полуоткрытый сокет закрывается целиком

@@ -418,7 +418,7 @@ export function setupChannel(
             pile(session, child, frame);
             return say(P.listening(), "info");
           }
-          if (frame?.type === "status") return;
+          if (frame?.type === "status" || frame?.type === "life_check") return; // the bridge's
           const told = endToldAlready(frame); // child_ended goes as any frame (childended.ts)
           if (told) return say(W.childEndedTold(told), "info");
           // The frame's path (#5851): with event_kind — the kind's rule, without — its own stack (#4957).

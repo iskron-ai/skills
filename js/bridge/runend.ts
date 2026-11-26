@@ -248,6 +248,9 @@ export async function endDeadRun(waitMs: number): Promise<void> {
   }
 }
 
+/** The agent's run ended (not a handover, a pause or an announced absence): its seat is gone. */
+export const runEnded = (): boolean => R.run !== null && R.late !== null && R.late !== "hold";
+
 /** A death window is pending: the session's upstream session must outlive the leave (session.ts). */
 export const deathPending = (): boolean => !!R.dead?.places.length;
 
