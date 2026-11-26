@@ -2059,6 +2059,27 @@ test("flapping against a live service becomes a word in the turn, not the end of
 // pi calls session_shutdown on paths where nothing was ever raised, and may call
 // it more than once. Both halves must go quiet, and the child must not outlive
 // the session it was spawned for.
+test("a waiting tact cannot open a turn after session shutdown", async () => {
+  const { events, env } = eventsEnv("shutdown-tact");
+  const rec = await session(env);
+  rec.busy(true);
+  const f = {
+    type: "message",
+    id: "tact-shutdown",
+    origin: "platform",
+    provenance: { via: "platform", wake: "look_up" },
+    body: "waiting tact",
+  };
+  push(events, { kind: "backlog", frames: [f], text: "waiting tact" });
+  await delay(300);
+  assert.equal(rec.messages.length, 0);
+  await rec.stop();
+  await delay(1300);
+  assert.equal(rec.messages.length, 0, "shutdown must cancel the waiting tact");
+  await rec.fire("agent_end");
+  assert.equal(rec.messages.length, 0, "late agent_end cannot wake the session");
+});
+
 test("session_shutdown is idempotent and quiets both halves", async () => {
   const { log, reply, env } = bridgeEnv("shutdown");
   const rec = await session(env);
