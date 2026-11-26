@@ -94,6 +94,12 @@ const at = (url: string | null): { m: Mux; secret: string } | null => {
   return m && secret ? { m, secret } : null;
 };
 
+/** The session holding the channel of `url` really ended: its life check is answered gone. */
+export function lifeEnded(url: string | null): void {
+  const got = at(url);
+  got?.m.ended(got.secret);
+}
+
 /**
  * Lines of seats on a channel the dispatcher carries (`url` — its socket or status address) go
  * into the tact instead of a POST: true — taken; false — not this path, or no seat to name

@@ -22,8 +22,9 @@ export function lifeOf(id: string): Life {
 
 function answer(frame: Frame): void {
   const standing_id = typeof frame.standing_id === "string" ? frame.standing_id : "";
-  const ref = typeof frame.ref === "string" || typeof frame.ref === "number" ? frame.ref : null;
-  if (ref === null) return log(`life_check without a ref — not answered`);
+  // The ref is the server's string (a UUID's text), echoed as is; a malformed one is the server's.
+  const ref = typeof frame.ref === "string" ? frame.ref : null;
+  if (ref === null) return log(`life_check without a string ref — not answered`);
   const state = lifeOf(standing_id);
   const sent = H.holder?.send(JSON.stringify({ type: "life", standing_id, ref, state })) ?? false;
   log(`life_check ${ref} of ${standing_id || "?"}: ${state}${sent ? "" : " — not sent"}`);
