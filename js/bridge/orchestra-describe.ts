@@ -11,6 +11,7 @@ import { words } from "../shared/lang.ts";
 import { mcpSession } from "../shared/mcpsession.ts";
 import { nodeBody } from "./node-body.ts";
 import { LAUNCHER_MAX, parseLauncher } from "./orchestra-launchers.ts";
+import { throughGate } from "./returngate.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
 
@@ -75,7 +76,7 @@ export async function ensureLauncher(
   if (!serverUrl || !token) throw new Error(w().describeFailed(spec.launcher, "no key"));
   const s = mcpSession(serverUrl, token, "orchestra");
   try {
-    await s.open();
+    await throughGate(serverUrl, () => s.open(), "open"); // every upstream initialize (#11375)
     const found = await s.call(tool("search"), {
       realm: "mind",
       q: "",

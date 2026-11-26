@@ -288,12 +288,11 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         msg.params?.name === tool("channel") ? beginTaking(msg.params.arguments ?? {}) : null;
       const send = () =>
         takes ? withCallOrigin(msg.id, () => post(msg, forward)) : post(msg, forward);
-      // A thin bridge's replayed handshake to a session new to it (a successor after a handover
-      // or a self-update) is a return: the machine's gate (returngate.ts, #11375); a session's
-      // first handshake is not.
-      await (isInit && String(msg.id).startsWith(REPLAY_ID_PREFIX)
-        ? throughGate(CFG.serverUrl, send)
-        : send());
+      // Every upstream initialize goes through the machine's gate (returngate.ts, #11375): a thin
+      // bridge's replayed handshake to a session new to it (a successor after a handover or a
+      // self-update) as a return; any other (new thin bridges after a plugin reload) as an open.
+      const replayed = String(msg.id).startsWith(REPLAY_ID_PREFIX);
+      await (isInit ? throughGate(CFG.serverUrl, send, replayed ? "return" : "open") : send());
       const held = heldReply as JsonRpcMessage | null;
       if (held && msg.params?.name === tool("channel") && msg.params.arguments)
         noteLocaleEcho(msg.params.arguments, replyText(held), structuredOf(held));

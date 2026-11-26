@@ -25,7 +25,8 @@ test("seats returning from disk after a reload or a self-update: one register fi
       await a.gone();
     }
     const from = fake.state.registerAt.length;
-    await fake.control({ standingRegisterDelayMs: REG_MS });
+    const fromInit = fake.state.initAt.length;
+    await fake.control({ standingRegisterDelayMs: REG_MS, initDelayMs: REG_MS });
     const back = await Promise.all(
       Array.from({ length: N }, async (_, i) => {
         const b = await bridge();
@@ -44,6 +45,38 @@ test("seats returning from disk after a reload or a self-update: one register fi
       `the probe's register answered before any other went: ${at.map((t) => t - first)}`,
     );
     assert.ok(peak(rest) <= 2, `at most two at once: ${at.map((t) => t - first)}`);
+    // The new bridges' own handshakes before the returns: at most two in flight too.
+    const inits = fake.state.initAt.slice(fromInit);
+    assert.ok(inits.length >= N, `each new bridge opened its session: ${inits.length}`);
+    assert.ok(
+      peak(inits) <= 2,
+      `initializes at most two in flight: ${inits.map((t) => t - inits[0])}`,
+    );
+  });
+});
+
+// A plugin reload: N new thin bridges at once on one daemon, each with an ordinary initialize (no
+// replay) — never more than two in flight, spread; one lone new session goes at once.
+test("a plugin reload: N new sessions' initializes never more than two in flight; a lone one goes at once", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    await bridge(); // the daemon is up
+    await fake.control({ initDelayMs: REG_MS });
+    const from = fake.state.initAt.length;
+    await Promise.all(Array.from({ length: 6 }, () => bridge()));
+    const at = fake.state.initAt.slice(from).sort((a, b) => a - b);
+    assert.equal(at.length, 6, `one initialize per new session: ${at.length}`);
+    assert.ok(peak(at) <= 2, `never more than two in flight: ${at.map((t) => t - at[0])}`);
+    await new Promise((r) => setTimeout(r, 500));
+    const lone = fake.state.initAt.length;
+    const t0 = Date.now();
+    await bridge();
+    const took = Date.now() - t0;
+    assert.equal(fake.state.initAt.length - lone, 1);
+    assert.ok(took < REG_MS + 1500, `the lone initialize went at once: ${took} ms`);
+    const gateLines = journalOf(dir)
+      .split("\n")
+      .filter((l) => /return gate: .* waiting/.test(l));
+    assert.ok(gateLines.length <= 6, "no wait line for the lone one beyond the crowd's");
   });
 });
 

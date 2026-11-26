@@ -4,11 +4,14 @@
 // as the number of seats, not of machines. Now the first session that comes to return is the
 // probe, one per machine; the others that meet 404 or come to return (a re-registration after a
 // self-update, a plugin reload, a daemon handover) wait for its outcome. The probe returned —
-// the waiting return at most two at a time, each after a random delay in a window that grows
-// with the number waiting (capped at 60 s). The probe met 502/503/504 or no connection — the
-// down window (downwindow.ts) stands: the waiting do not knock, their calls answer «not sent»,
-// and the next probe goes by the window's ladder (its file lock). Nothing returns ahead of a
-// call: only a call that needs its session back comes here. A bridge outside a daemon is a
+// the waiting go at most two at a time; with more than two waiting each draws a random delay in
+// a window that grows with their number (capped at 60 s). The probe met 502/503/504 or no
+// connection — the down window (downwindow.ts) stands: the waiting do not knock, their calls
+// answer «not sent», and the next probe goes by the window's ladder (its file lock). Nothing
+// returns ahead of a call: only a call that needs its session back comes here. Every other
+// upstream initialize the daemon opens (new thin bridges after a plugin reload, the
+// orchestrator's own session) goes through the same gate as "open": at once without
+// contention, at most two in flight with everything else. A bridge outside a daemon is a
 // machine of its own: its gate holds only itself (README).
 import { envName } from "../delivery/index.ts";
 import { DownError } from "./errors.ts";
@@ -27,9 +30,11 @@ const AT_ONCE = 2;
 interface Gate {
   /** The probe's outcome while it is out: null — answered; a DownError — the server is down. */
   probe: Promise<unknown> | null;
-  /** Sessions waiting for the probe or their turn. */
+  /** Sessions waiting for the probe or their turn, of either kind. */
   waiting: number;
-  /** Returns out now, after the probe. */
+  /** Returns waiting or out: none — the next return to come is a probe. */
+  returns: number;
+  /** Knocks out now, of either kind, the probe's included: never more than AT_ONCE. */
   out: number;
   turns: (() => void)[];
 }
@@ -37,30 +42,53 @@ interface Gate {
 const gates = new Map<string, Gate>();
 const gateOf = (server: string): Gate => {
   let g = gates.get(server);
-  if (!g) gates.set(server, (g = { probe: null, waiting: 0, out: 0, turns: [] }));
+  if (!g) gates.set(server, (g = { probe: null, waiting: 0, returns: 0, out: 0, turns: [] }));
   return g;
 };
 
-/** The gate is quiet: no probe, nobody waiting, nothing out — the next one to come is a probe. */
-const quiet = (g: Gate): boolean => !g.probe && g.waiting === 0 && g.out === 0;
-
+/** A slot of the AT_ONCE: free — taken now; else in turn, handed over by the one that ends. */
 async function turn(g: Gate): Promise<void> {
-  if (g.out < AT_ONCE) return void g.out++;
+  if (g.out < AT_ONCE && !g.turns.length) return void g.out++;
   await new Promise<void>((r) => g.turns.push(r));
-  g.out++;
 }
 
 function done(g: Gate): void {
-  g.out--;
-  g.turns.shift()?.();
+  const next = g.turns.shift();
+  if (next)
+    next(); // the slot passes on, counted still
+  else g.out--;
 }
 
-/** `knock` — the session's return (its initialize, or its seat's register): through the gate. */
-export async function throughGate<T>(server: string, knock: () => Promise<T>): Promise<T> {
+async function knocked<T>(g: Gate, knock: () => Promise<T>): Promise<T> {
+  try {
+    return await knock();
+  } finally {
+    done(g);
+  }
+}
+
+/**
+ * `knock` through the gate. "return" — a session coming back (a reopen after 404, a replayed
+ * handshake after a handover, a seat's re-registration): the first return to come when none is
+ * waiting or out is the probe, and the other returns and opens wait for its outcome. "open" —
+ * any other upstream initialize the daemon opens: never a probe; without contention (no probe,
+ * nobody waiting, a free slot) it goes at once. All go at most two at a time; with more than
+ * two waiting each draws its random delay.
+ */
+export async function throughGate<T>(
+  server: string,
+  knock: () => Promise<T>,
+  kind: "return" | "open" = "return",
+): Promise<T> {
   const g = gateOf(server);
-  if (quiet(g)) {
+  if (kind === "open" && !g.probe && g.waiting === 0 && g.out < AT_ONCE) {
+    g.out++;
+    return knocked(g, knock);
+  }
+  if (kind === "return" && !g.probe && g.returns === 0) {
     log("return gate: this session is the machine's probe");
-    const run = knock();
+    g.returns++;
+    const run = turn(g).then(() => knocked(g, knock));
     g.probe = run.then(
       () => null,
       (e: unknown) => (e instanceof DownError ? e : null),
@@ -70,26 +98,33 @@ export async function throughGate<T>(server: string, knock: () => Promise<T>): P
     } finally {
       await g.probe;
       g.probe = null;
+      g.returns--;
     }
   }
-  g.waiting++;
+  if (kind === "return") g.returns++;
   try {
-    for (let p = g.probe; p; p = g.probe) {
-      const down = await p;
-      // The server is down: the window stands — no knock; the call answers «not sent».
-      if (down instanceof DownError) throw down;
+    g.waiting++;
+    try {
+      for (let p = g.probe; p; p = g.probe) {
+        const down = await p;
+        // The server is down: the window stands — no knock; the call answers «not sent».
+        if (down instanceof DownError) throw down;
+      }
+      // A few behind the two in flight just take their turns; a crowd spreads over the window.
+      if (g.waiting > AT_ONCE) {
+        const window = Math.min(CAP_MS, STEP_MS * g.waiting);
+        const wait = Math.floor(Math.random() * window);
+        log(
+          `return gate: ${g.waiting} waiting — this one goes in ${wait} ms (window ${window} ms)`,
+        );
+        await sleep(wait);
+      }
+      await turn(g);
+    } finally {
+      g.waiting--;
     }
-    const window = Math.min(CAP_MS, STEP_MS * g.waiting);
-    const wait = Math.floor(Math.random() * window);
-    log(`return gate: ${g.waiting} waiting — this one returns in ${wait} ms (window ${window} ms)`);
-    await sleep(wait);
-    await turn(g);
+    return await knocked(g, knock);
   } finally {
-    g.waiting--;
-  }
-  try {
-    return await knock();
-  } finally {
-    done(g);
+    if (kind === "return") g.returns--;
   }
 }

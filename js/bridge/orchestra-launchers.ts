@@ -18,6 +18,7 @@ import { readAccount, UUID } from "./orchestra-account.ts";
 import { parseClone } from "./orchestra-clone.ts";
 import { parseHarnesses } from "./orchestra-harnesses.ts";
 import type { Adapter, Launcher, Launchers } from "./orchestra-launcher-types.ts";
+import { throughGate } from "./returngate.ts";
 export type { HarnessOffer, Launcher, Launchers } from "./orchestra-launcher-types.ts";
 
 const SLICE = "slice:orchestra";
@@ -93,7 +94,7 @@ export async function readLaunchers(serverUrl: string, token: string): Promise<L
   const out: Launchers = { account: "", own: new Map(), elsewhere: new Map(), refused: [] };
   const here = hostname().toLowerCase();
   try {
-    await s.open();
+    await throughGate(serverUrl, () => s.open(), "open"); // every upstream initialize (#11375)
     const account = await readAccount(s);
     out.account = account.handle;
     out.accountId = account.id;
