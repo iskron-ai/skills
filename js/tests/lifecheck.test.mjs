@@ -73,7 +73,7 @@ const opencode = (parents = new Map()) => {
   const ch = setupChannel(
     {
       session: {
-        get: async () => ({}),
+        get: async ({ sessionID }) => ({ id: sessionID }),
         prompt: async (o) => (prompts.push(o), { id: `in-${prompts.length}` }),
       },
     },
