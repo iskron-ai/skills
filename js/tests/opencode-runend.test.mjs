@@ -76,6 +76,24 @@ test("a standalone run resuming a session (--session): a plain absence, no run n
   assert.ok(markers.length >= 1);
 });
 
+// The run's options are its argv elements before the message: a prompt that mentions a
+// continuation flag is no continuation; an option taking a value swallows the element after it.
+for (const [what, args, continues] of [
+  ["a prompt naming --session", ["--standalone", "Explain the --session flag"], false],
+  ["--session abc and a message", ["--standalone", "--session", "abc", "x"], true],
+  ["-c", ["--standalone", "-c"], true],
+  ["--session=abc", ["--standalone", "--session=abc", "x"], true],
+  ["a value that looks like a flag", ["--standalone", "--title", "-c", "x"], false],
+])
+  test(`a standalone run with ${what}: ${continues ? "a continuation, no run named" : "a new run, its pid named"}`, async (t) => {
+    const name = `run-argv-${what.replace(/\W+/g, "-")}`;
+    const { said, client } = await reloadMidTurn(t, name, ["opencode", "run", ...args]);
+    assert.deepEqual(
+      said.map((c) => [c.name, c.arguments]),
+      [["iskron/away", continues ? {} : { run_pid: client.pid }]],
+    );
+  });
+
 test("a stop of the shared service (a default-shape run, a reload): a plain absence", async (t) => {
   const { said } = await reloadMidTurn(t, "run-shared", null);
   assert.deepEqual(

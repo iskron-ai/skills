@@ -7,24 +7,74 @@
 // run resuming a session (--session, -s, --continue, -c) ends while the session lives on: a
 // plain absence. The shared service never learns a run's end — a default-shape run records none.
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 import { standaloneClient } from "./client.ts";
 
-const RESUMES = /(?:^|\s)(?:--session|-s|--continue|-c)(?:=|\s|$)/;
+/**
+ * `opencode run` options that take a value (`opencode run --help`, OpenCode 2.2.x): the element
+ * after one of them is its value, not an option.
+ */
+const VALUED = new Set([
+  "--session",
+  "-s",
+  "--model",
+  "-m",
+  "--agent",
+  "--format",
+  "--file",
+  "-f",
+  "--title",
+  "--completions",
+  "--log-level",
+  "--server",
+]);
+const CONTINUES = new Set(["--session", "-s", "--continue", "-c"]);
 
-/** The run's command line; null — not readable (no ps, the run gone). */
-function commandOf(pid: number): string | null {
+/**
+ * The run's argv elements: exact on Linux (/proc, NUL-separated); elsewhere `ps` joins them with
+ * spaces and they are split back on whitespace — an element with spaces inside comes back as
+ * several. null — not readable (no ps, the run gone).
+ */
+function argvOf(pid: number): string[] | null {
+  try {
+    const raw = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    if (raw) return raw.replace(/\0$/, "").split("\0");
+  } catch {
+    /* not Linux, or gone — ps below */
+  }
   try {
     const out = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
       encoding: "utf8",
       timeout: 5_000,
       stdio: ["ignore", "pipe", "ignore"],
       windowsHide: true,
-    });
-    return out.trim() || null;
+    }).trim();
+    return out ? out.split(/\s+/) : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * The run continues a session: an option element among those after `run` — exactly `--session`,
+ * `--session=…`, `-s`, `--continue` or `-c`. A value that follows an option taking one is no
+ * option; the options end at the first positional element (the message) or at `--`: a prompt
+ * that mentions «--session» never counts. No `run` element — not judged a new run.
+ */
+export function continuesSession(argv: string[]): boolean {
+  const at = argv.findIndex(
+    (x, i) => x === "run" && i > 0 && /opencode(?:\.exe)?$/.test(argv[i - 1] ?? ""),
+  );
+  if (at < 0) return true;
+  for (let i = at + 1; i < argv.length; i++) {
+    const x = argv[i] ?? "";
+    if (x === "--" || !x.startsWith("-")) return false;
+    const name = x.split("=", 1)[0] ?? x;
+    if (CONTINUES.has(name)) return true;
+    if (VALUED.has(x)) i++; // its value
+  }
+  return false;
 }
 
 /**
@@ -33,6 +83,6 @@ function commandOf(pid: number): string | null {
  */
 export function runOfInstance(): number | null {
   const run = standaloneClient();
-  const line = run === null ? null : commandOf(run);
-  return run !== null && line !== null && !RESUMES.test(line) ? run : null;
+  const argv = run === null ? null : argvOf(run);
+  return run !== null && argv !== null && !continuesSession(argv) ? run : null;
 }
