@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { Backlog } from "../bridge/backlog.ts";
 import { staleBatch } from "../shared/stalebatch.ts";
 import { BATCH_MS, delay, plugin, SANDBOX, until } from "./opencode-kit.mjs";
 import { ME, progress, roomFrame } from "./room-frames.mjs";
@@ -62,6 +63,34 @@ test("a stale batch of counts only opens no turn: its counts ride the next promp
     assert.equal(rec.prompts.length, 1, "one prompt");
     assert.match(rec.prompts[0].text, /СЛОВО-20/);
     assert.match(rec.prompts[0].text, /записей 4, тебе 1/, rec.prompts[0].text);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Cold review of #906 (№5823): a wake-up of 100 records the bridge cut to its first 20 kept only
+// «записей 20» in the pile, while all 100 were marked given — the rest lost unsaid. The pile
+// keeps the server's whole count and the «not included» line and carries both into the prompt.
+test("a cut wake-up batch of counts only: the next prompt says the whole count and what was not included", async () => {
+  const { rec, send, frame } = await seated("ro-cut", "s-ro-cut");
+  try {
+    const b = new Backlog(() => false);
+    let ev = null;
+    b.open(100, (e) => (ev = e));
+    for (let n = 1; n <= 100; n++) b.note(count(n));
+    b.flushNow();
+    assert.equal(ev.frames.length, 20, "the bridge shows the first 20");
+    send(event("backlog", ev));
+    await delay(BATCH_MS * 6);
+    assert.equal(rec.prompts.length, 0, "a batch of counts only opens no turn");
+    send(frame(word(200)));
+    await until(() => rec.prompts.length === 1, "the word's prompt");
+    const { text } = rec.prompts[0];
+    assert.match(
+      text,
+      /Побудка: кадров 100 \(ожидало в очереди: 100\), здесь первые 20, не вошло 80/,
+    );
+    assert.match(text, /СЛОВО-200/, text);
   } finally {
     await rec.stop();
   }
