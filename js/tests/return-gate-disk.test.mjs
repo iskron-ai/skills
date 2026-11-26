@@ -141,7 +141,7 @@ async function seats(bridge, n, prefix) {
 test("seats coming back with hearing not proven: their board reads go one first, then at most two in flight, spread", async (t) => {
   const LIST_MS = 300;
   withEnv(t, { ISKRON_BRIDGE_RETURN_STEP_MS: "100", ISKRON_BRIDGE_RETURN_DRAW: "0.5" });
-  await withFake(async ({ fake, bridge }) => {
+  await withFake(async ({ fake, dir, bridge }) => {
     const n = 5;
     const all = await seats(bridge, n, "rb");
     const sockets = fake.state.ws.size;
@@ -165,6 +165,9 @@ test("seats coming back with hearing not proven: their board reads go one first,
       fake.state.listPeak <= 2,
       `at most two board reads in flight: ${fake.state.listPeak}`,
     );
+    // Each read says itself in the journal: a live run counts them from the bridge's log.
+    const said = (journalOf(dir).match(/board read \(watchdog check, /g) ?? []).length;
+    assert.ok(said >= n, `a journal line for every board read: ${said}`);
   });
 });
 
@@ -210,6 +213,81 @@ test("a plugin reload: N new sessions' initializes never more than two in flight
 /** The machine's daemons by their «listening» lines, in order. */
 const daemonsOf = (dir) =>
   [...journalOf(dir).matchAll(/ pid=(\d+) \S+ listening /g)].map((m) => +m[1]);
+
+const whoami = { name: "iskron_me", arguments: { action: "whoami" } };
+
+// The LAB run of batch A (№5817), its first mcp restart: the seats had been left by the bridge
+// (nobody listened for 15 minutes — its socket closed, the seat parked) when every session was
+// lost; then each seat made one call. The rebind read the board for every parked seat — the deaf
+// check — and then sent no register anyway (a left seat is not re-registered): six board reads
+// for nothing, and again on every next call. A parked seat is no rebind's: no board read, no
+// register; it returns by its own stand (#11351, #11337).
+test("an mcp restart over seats the bridge had left: no board read and no register on the return", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const all = await seats(bridge, N, "lp");
+    for (const b of all) {
+      const r = await b.request("tools/call", {
+        name: "iskron_channel",
+        arguments: { action: "leave", realm: "nks-dev" },
+      });
+      assert.ok(r.result && !r.result.isError, JSON.stringify(r));
+    }
+    const [lists, regs] = [fake.state.counts.list, fake.state.counts.register_standing];
+    await fake.control({ kill_session: true });
+    for (let round = 0; round < 2; round++)
+      for (const b of all) {
+        const r = await b.request("tools/call", whoami);
+        assert.ok(r.result && !r.error, JSON.stringify(r));
+      }
+    assert.equal(fake.state.counts.list - lists, 0, `no board read:\n${journalOf(dir)}`);
+    assert.equal(fake.state.counts.register_standing - regs, 0, "a left seat is not registered");
+    assert.equal(
+      (journalOf(dir).match(/board read \(/g) ?? []).length,
+      0,
+      "no board read line in the journal",
+    );
+  });
+});
+
+// The LAB run of batch A (№5817): seats stood; a daemon handover (SIGTERM) — the successor
+// returns each seat from disk; then an mcp restart loses every session with the sockets alive,
+// and each seat makes one call. The return re-registers each seat and reads no board: the
+// socket hears on — a lost session is not a deaf seat (#11351, #11337).
+test("after a handover, an mcp restart under live sockets: each seat re-registers and no board is read", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const all = await seats(bridge, N, "lh");
+    const [first] = await waitFor("the daemon", () => daemonsOf(dir).length && daemonsOf(dir));
+    process.kill(first, "SIGTERM");
+    await waitFor("the successor", () => daemonsOf(dir).length >= 2, 20_000);
+    for (const b of all) {
+      const r = await b.request("tools/call", whoami);
+      assert.ok(r.result && !r.error, JSON.stringify(r));
+    }
+    await waitFor("the seats back from disk", () =>
+      (journalOf(dir).match(/standing resumed from disk/g) ?? []).length >= N ? true : null,
+    );
+    const [lists, regs] = [fake.state.counts.list, fake.state.counts.register_standing];
+    await fake.control({ kill_session: true });
+    for (const b of all) {
+      const r = await b.request("tools/call", whoami);
+      assert.ok(r.result && !r.error, JSON.stringify(r));
+    }
+    assert.equal(fake.state.counts.register_standing - regs, N, "each seat registered again");
+    assert.equal(fake.state.counts.list - lists, 0, `no board read:\n${journalOf(dir)}`);
+    for (const [i, b] of all.entries()) {
+      const r = await b.request("tools/call", {
+        name: "iskron_channel",
+        arguments: { action: "revoke", realm: "nks-dev", karta: 931, standing: `lh-${i}` },
+      });
+      assert.ok(r.result && !r.error, JSON.stringify(r));
+    }
+    assert.equal(
+      fake.state.counts.list - lists,
+      0,
+      `no board read by the revoke:\n${journalOf(dir)}`,
+    );
+  });
+});
 
 // A daemon handover (a self-update's crest, #11375; №5817 [292]): every thin bridge replays the
 // harness's initialize to the successor — a return, not a session's first handshake: one first,

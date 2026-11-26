@@ -75,11 +75,13 @@ export async function stillOwn(s: Standing, status: string | null): Promise<bool
     if (!r.ok) return unknown(`its status address did not answer: ${r.body.slice(0, 120)}`);
   }
   // A return: the gate (boardread.ts).
-  const board = await boardRead(s.realm, normKarta(s.karta)).catch((e: Error) => ({
-    isError: true,
-    text: e.message,
-    structured: undefined,
-  }));
+  const board = await boardRead(s.realm, normKarta(s.karta), `death window, ${key}`).catch(
+    (e: Error) => ({
+      isError: true,
+      text: e.message,
+      structured: undefined,
+    }),
+  );
   if (board.isError) return unknown(`the board did not read: ${board.text.slice(0, 120)}`);
   const bd = readBoard(board);
   const own = bd.entries.filter(

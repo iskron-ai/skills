@@ -149,6 +149,28 @@ test("a re-registration's retry after a seat-open race goes through the gate too
   );
 });
 
+// The LAB scene of batch A (№5817): seats held on the dispatcher, sockets alive, an mcp restart
+// loses every session; then each seat makes one call. The return re-registers every seat and reads
+// no board: the socket hears on — a lost session is not a deaf seat (#11351, #11337).
+test("an mcp restart under live sockets: each seat's next call re-registers it and reads no board", async () => {
+  await withMux(
+    async ({ fake, session, journal }) => {
+      const all = await sessions(session, 6);
+      for (const [i, s] of all.entries())
+        assert.ok(!(await s.stand({ realm: REALM, karta: 931, name: `lb-${i}` })).result?.isError);
+      const [lists, regs] = [fake.state.counts.list, fake.state.counts.register_standing];
+      await fake.control({ kill_session: true });
+      for (const s of all) {
+        const r = await s.rpc("tools/call", { name: "iskron_me", arguments: { action: "whoami" } });
+        assert.ok(!r.result?.isError && !r.error, JSON.stringify(r));
+      }
+      assert.equal(fake.state.counts.register_standing - regs, 6, "each seat registered again");
+      assert.equal(fake.state.counts.list - lists, 0, `no board read:\n${journal()}`);
+    },
+    { daemonEnv: { ISKRON_BRIDGE_RETURN_STEP_MS: "1", ISKRON_BRIDGE_RETURN_CAP_MS: "1" } },
+  );
+});
+
 test("re-registration of seats after the lost session goes the same way: one first, then at most two at once", async () => {
   await withMux(
     async ({ fake, session }) => {

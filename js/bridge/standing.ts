@@ -7,7 +7,7 @@ import { endedSince } from "./endedseats.ts";
 import { errorMessage } from "./errors.ts";
 import { standBesideAgain } from "./evicted.ts";
 import { seatField, structuredOf } from "./fields.ts";
-import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
+import { addPlace, isParked, noteStandingId, releaseStanding } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
 import { besideSeats, dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
 import {
@@ -108,6 +108,12 @@ function replayStanding(): Promise<string | null> {
 }
 
 async function rebind(move: RegisterMove): Promise<void> {
+  // A seat the bridge left (leave, nobody listening) is no rebind's: its register would not be
+  // sent (registergate.ts), so its deaf check reads the board for nothing (#11351, #11337).
+  // It returns by its own stand; the socket's state decides, not the board.
+  const s = state.standing;
+  if (s && isParked(s.realm, s.karta, s.name ?? ""))
+    return log("standing not re-registered: the seat was left — it returns by its own stand");
   // A deaf seat another session may listen on is not re-bound (deaf.ts, #6706).
   const deaf = await deafSeatTaken();
   if (deaf) return log(`standing not re-registered: ${deaf}`);

@@ -435,7 +435,7 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     D.reopens = 0;
     return reply(msg, { holding: true, key, listening: true, word: resumeWords.listening() });
   }
-  const board = await boardRead(s.realm, s.karta); // a return: the gate (boardread.ts)
+  const board = await boardRead(s.realm, s.karta, `watchdog check, ${key} not heard live`); // a return: the gate
   if (board.isError)
     return reply(msg, { holding: true, key, word: resumeWords.boardUnread(short(board.text)) });
   const mine = readBoard(board).entries.find(

@@ -170,7 +170,10 @@ export async function askedHearing(
   const local = await heldLocally(realm, karta, name, cwd);
   if (local === "other") return "other";
   if (local === "session") return "free";
-  const b = await boardRead(realm, karta).catch(() => null); // a return: the gate (boardread.ts)
+  // A return: the gate (boardread.ts).
+  const b = await boardRead(realm, karta, `hearing of ${name || "the seat"} not proven`).catch(
+    () => null,
+  );
   return boardHearing(b && !b.isError ? readBoard(b) : null, karta, name);
 }
 
