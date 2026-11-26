@@ -3858,6 +3858,12 @@ test("satellite: its own revoke at the run's end is repeated once on a closed co
 // #7599: the answer names what it revoked too — the launcher's revoke then is not sent; a revoked
 // seat goes by its graph (canonical), role and name (№664).
 const SAT_SEAT = { realm: "@nks/nks-dev", karta: "931", name: `${CALLER}.sub-1` };
+/** The end's answer without the seat ids it covered (a child_ended names the child by them). */
+const noIds = (r) => {
+  assert.ok(Array.isArray(r?.ids), `the end names its seats' ids: ${JSON.stringify(r)}`);
+  const { ids: _ids, ...rest } = r;
+  return rest;
+};
 test("satellite: iskron/end names the places it revoked and those it could not; a dropped usage snapshot does not stop the revoke", async (t) => {
   const fake = await withCaller(t);
   const { bridge: sat } = await usageBridge(t, { fake, gap: "600000", args: ["--satellite"] });
@@ -3867,7 +3873,7 @@ test("satellite: iskron/end names the places it revoked and those it could not; 
   await fake.control({ mcpDrop: 2, mcpDropAction: "iskron_channel:register" });
   const ok = (await sat.call("iskron/end", {})).result;
   assert.deepEqual(
-    ok,
+    noIds(ok),
     { ended: true, failed: [], revoked: [SAT_SEAT], probably: [] },
     `${JSON.stringify(ok)}\n${sat.stderr}`,
   );
@@ -3879,7 +3885,7 @@ test("satellite: iskron/end names the places it revoked and those it could not; 
   await fake2.control({ mcpDrop: 2, mcpDropAction: "iskron_channel:revoke" });
   const bad = (await sat2.call("iskron/end", {})).result;
   assert.deepEqual(
-    bad,
+    noIds(bad),
     { ended: true, failed: [`${CALLER}.sub-1`], revoked: [], probably: [] },
     sat2.stderr,
   );
@@ -3949,7 +3955,7 @@ for (const [how, refuse, confirmed] of [
     const end = (await sat.call("iskron/end", {})).result;
     const place = `${CALLER}.sub-1`;
     assert.deepEqual(
-      end,
+      noIds(end),
       {
         ended: true,
         failed: [],
@@ -3977,7 +3983,7 @@ test("satellite: iskron/end keys a confirmed revoke by graph, role and name — 
   });
   const end = (await sat.call("iskron/end", {})).result;
   assert.deepEqual(
-    end,
+    noIds(end),
     {
       ended: true,
       failed: [place],
