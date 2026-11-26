@@ -260,13 +260,10 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
   }
   noteServerDate(res);
   if (DOWN_HTTP.has(res.status)) {
-    const body = (await res.text().catch(() => "")).slice(0, 300);
-    throw downHttp(
-      gate.knock,
-      res.status,
-      body,
-      retryAfterMs(res.headers.get("retry-after"), body),
-    );
+    // The server's pause is read from the whole body; only the word keeps it short.
+    const body = await res.text().catch(() => "");
+    const pause = retryAfterMs(res.headers.get("retry-after"), body);
+    throw downHttp(gate.knock, res.status, body.slice(0, 300), pause);
   }
   windowAnswered(gate.knock);
 

@@ -10,7 +10,7 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { createServer, request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -117,7 +117,7 @@ async function frontDoor(targetUrl) {
       )
         return json(
           503,
-          { error: "service unavailable" },
+          door.body ?? { error: "service unavailable" },
           door.retryAfter ? { "retry-after": String(door.retryAfter) } : {},
         );
       if (door.mode === "gone" && req.headers["mcp-session-id"])
@@ -137,8 +137,10 @@ async function frontDoor(targetUrl) {
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   door.url = `http://127.0.0.1:${server.address().port}${target.pathname}`;
-  door.set = (mode, { retryAfter = null, initDown = false, drops = 1 } = {}) => {
+  // body — the 503's JSON instead of the short default (a long ProblemDetail, say).
+  door.set = (mode, { retryAfter = null, initDown = false, drops = 1, body = null } = {}) => {
     door.mode = mode;
+    door.body = body;
     door.retryAfter = retryAfter;
     door.initDown = initDown;
     door.drops = drops;
@@ -172,6 +174,26 @@ async function machine(t, fn) {
   };
   await fn({ door, dir, seat });
 }
+
+// A long ProblemDetail with the server's pause inside and no header: the pause is read from the
+// whole body — only the word is cut short — so the window lasts the server's 10 s, not a ladder step.
+test("a long 503 body naming retry_after_secs, no header: the window lasts the server's pause", async (t) => {
+  await machine(t, async ({ door, dir, seat }) => {
+    const a = await seat();
+    const body = {
+      title: "Service Unavailable",
+      detail: "the api is restarting ".repeat(40),
+      errors: [{ rule: "restarting", data: { retry_after_secs: 10 } }],
+    };
+    assert.ok(JSON.stringify(body).length > 600, "precondition: the body is long");
+    await door.set("down", { body });
+    const t0 = Date.now();
+    const first = await a.call("tools/call", 2, ORIENT);
+    assert.match(text(first), /server unavailable/, JSON.stringify(first));
+    const rec = JSON.parse(readFileSync(join(dir, downRecord(dir)), "utf8"));
+    assert.ok(rec.notBefore - t0 >= 9_500, `the window: ${rec.notBefore - t0} ms`);
+  });
+});
 
 // The Retry-After of the front line (one second) stands in for a window the test can
 // wait out; the ladder here draws its jitter under 300 ms, so a refusal after that is
