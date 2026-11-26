@@ -1,9 +1,10 @@
 // The harness's line (graph @nks/nks-dev, node #11416): a stdio MCP client reads JSON-RPC
 // line by line with a fixed buffer, often 1–4 MB, and a longer line kills its whole MCP
 // transport — every later call fails until a reconnect. So a line over the limit is never
-// written: a response becomes a short refusal to the same id, anything else is dropped
-// with a log line. BRIDGE_MAX_LINE_BYTES sets the limit; 0 — no limit.
-import { BRIDGE_NAME, envName, LINE_LIMIT } from "../delivery/index.ts";
+// written: a response becomes a short refusal to the same id, which states the outcome the
+// cut reply carried — a result is carried out, an isError result or an error is not —
+// anything else is dropped with a log line. BRIDGE_MAX_LINE_BYTES sets the limit; 0 — no limit.
+import { BRIDGE_NAME, envName, LINE_LIMIT, type LineCut } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { BUILD } from "./build.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -18,6 +19,20 @@ export function lineLimit(): number {
 }
 
 const mb = (bytes: number): string => (bytes / MIB).toFixed(1);
+
+/** What the cut reply said, so the refusal states the server's own outcome. */
+function cutOf(msg: JsonRpcMessage): LineCut {
+  if (msg.error !== undefined) {
+    const code: unknown = (msg.error as { code?: unknown } | null)?.code;
+    return {
+      kind: "error",
+      code: typeof code === "number" || typeof code === "string" ? code : "?",
+    };
+  }
+  return (msg.result as { isError?: unknown } | null)?.isError === true
+    ? { kind: "refusal" }
+    : { kind: "result" };
+}
 
 /** The line to write for `msg`, newline included; null — nothing goes to the harness. */
 export function harnessLine(msg: JsonRpcMessage, log: (s: string) => void): string | null {
@@ -40,7 +55,7 @@ export function harnessLine(msg: JsonRpcMessage, log: (s: string) => void): stri
     id: msg.id,
     error: {
       code: -32001,
-      message: `${BRIDGE_NAME} ${BUILD}: ${words(LINE_LIMIT).tooLong(mb(size), mb(limit))}.`,
+      message: `${BRIDGE_NAME} ${BUILD}: ${words(LINE_LIMIT).tooLong(mb(size), mb(limit), cutOf(msg))}.`,
     },
   };
   return JSON.stringify(refusal) + "\n";

@@ -1,7 +1,9 @@
 // The harness's line limit (bridge/linelimit.ts, graph @nks/nks-dev, node #11416): a stdio
 // MCP client reads one JSON-RPC line into a fixed buffer, and a longer line kills its whole
 // transport. A reply over the limit (1 MiB by default) comes back as one short refusal to
-// the same id; the next call works; a reply under the limit passes untouched. Through the
+// the same id; the next call works; a reply under the limit passes untouched. The refusal
+// says the server's outcome: a result is applied, an isError result or a JSON-RPC error
+// (its code named) applied nothing. Through the
 // full bridge and through the thin bridge to the real daemon. ISKRON_BRIDGE_PATH points the
 // probe at a past build, which writes the 2 MiB line as is — the red this probe wants.
 import assert from "node:assert/strict";
@@ -20,6 +22,9 @@ const KIB = 1024;
 const text = (bytes) => ({ content: [{ type: "text", text: "x".repeat(bytes) }] });
 const BIG = text(2048 * KIB);
 const UNDER = text(900 * KIB);
+const BIG_REFUSAL = { ...text(2048 * KIB), isError: true };
+const BIG_ERROR = { code: -32602, message: "x".repeat(2048 * KIB) };
+const APPLIED = /исполнен|применена/;
 
 function harness(url, dir, daemon, env = {}) {
   const proc = spawn(
@@ -86,7 +91,8 @@ function harness(url, dir, daemon, env = {}) {
 async function withHarness(daemon, env, fn) {
   const fake = await startFakeNks({
     pat: PAT,
-    callResults: { iskron_orient: BIG, iskron_look: UNDER },
+    callResults: { iskron_orient: BIG, iskron_look: UNDER, iskron_search: BIG_REFUSAL },
+    callErrors: { iskron_history: BIG_ERROR },
   });
   const dir = mkdtempSync(join(tmpdir(), "iskron-linelimit-"));
   const b = harness(fake.mcpUrl, dir, daemon, env);
@@ -128,6 +134,11 @@ for (const daemon of [false, true]) {
       );
       assert.match(big.msg.error.message, /Ничего не сломалось/);
       assert.match(big.msg.error.message, /fold=true/);
+      assert.match(
+        big.msg.error.message,
+        /исполнен — запись, если это была запись, применена/,
+        "a plain result was carried out, and the refusal says so",
+      );
       const under = await b.call("tools/call", { name: "iskron_look", arguments: {} });
       assert.deepEqual(under.msg.result, UNDER, "the 900 KiB answer arrives whole");
       const list = await b.call("tools/list");
@@ -141,7 +152,49 @@ for (const daemon of [false, true]) {
       if (daemon) assert.match(b.stderr(), /through the machine's bridge daemon/);
     });
   });
+
+  test(`an oversized JSON-RPC error is refused as not applied and names its code (${path})`, async () => {
+    await withHarness(daemon, {}, async (b) => {
+      const err = await b.call("tools/call", { name: "iskron_history", arguments: {} });
+      assert.ok(err.bytes < 4096, `a short line, not the answer: ${err.bytes} bytes`);
+      assert.equal(err.msg.error?.code, -32001, JSON.stringify(err.msg));
+      assert.doesNotMatch(err.msg.error.message, APPLIED, "an error applied nothing");
+      assert.match(err.msg.error.message, /ошибкой JSON-RPC \(код -32602\)/);
+      assert.match(err.msg.error.message, /ничего не применено/);
+      assert.match(err.msg.error.message, /fold=true/);
+      const list = await b.call("tools/list");
+      assert.ok(list.msg.result?.tools, "the transport is alive after the refusal");
+    });
+  });
+
+  test(`an oversized isError result is refused as not applied (${path})`, async () => {
+    await withHarness(daemon, {}, async (b) => {
+      const ref = await b.call("tools/call", { name: "iskron_search", arguments: {} });
+      assert.ok(ref.bytes < 4096, `a short line, not the answer: ${ref.bytes} bytes`);
+      assert.equal(ref.msg.error?.code, -32001, JSON.stringify(ref.msg));
+      assert.doesNotMatch(ref.msg.error.message, APPLIED, "a refusal applied nothing");
+      assert.match(ref.msg.error.message, /ответил отказом/);
+      assert.match(ref.msg.error.message, /ничего не применено/);
+      assert.match(ref.msg.error.message, /fold=true/);
+      const list = await b.call("tools/list");
+      assert.ok(list.msg.result?.tools, "the transport is alive after the refusal");
+    });
+  });
 }
+
+test("in English the verdicts are the same: an error and a refusal applied nothing, a result is applied", async () => {
+  await withHarness(false, { ISKRON_BRIDGE_LANG: "en" }, async (b) => {
+    const err = await b.call("tools/call", { name: "iskron_history", arguments: {} });
+    assert.match(err.msg.error.message, /JSON-RPC error \(code -32602\)/);
+    assert.match(err.msg.error.message, /nothing was applied by this call/);
+    assert.doesNotMatch(err.msg.error.message, /carried out|is applied/);
+    const ref = await b.call("tools/call", { name: "iskron_search", arguments: {} });
+    assert.match(ref.msg.error.message, /a refusal too long to show: nothing was applied/);
+    assert.doesNotMatch(ref.msg.error.message, /carried out|is applied/);
+    const big = await b.call("tools/call", { name: "iskron_orient", arguments: {} });
+    assert.match(big.msg.error.message, /carried out — a write, if it was one, is applied/);
+  });
+});
 
 test("BRIDGE_MAX_LINE_BYTES=0 lifts the limit: the 2 MiB answer goes through whole", async () => {
   await withHarness(false, { ISKRON_BRIDGE_MAX_LINE_BYTES: "0" }, async (b) => {

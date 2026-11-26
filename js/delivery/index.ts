@@ -84,7 +84,7 @@ export { HOLD, type HoldWords } from "./words/hold.ts";
 export { LAUNCH, type LaunchWords } from "./words/launch.ts";
 export { LEAD, type LeadWords } from "./words/leads.ts";
 export { LEAVE, type LeaveWords } from "./words/leave.ts";
-export { LINE_LIMIT, type LineLimitWords } from "./words/linelimit.ts";
+export { LINE_LIMIT, type LineCut, type LineLimitWords } from "./words/linelimit.ts";
 export { LISTEN, type ListenWords } from "./words/listen.ts";
 export { LOST, type LostWords } from "./words/lostplaces.ts";
 export { MACHINE_STATUS, type MachineStatusWords } from "./words/machinestatus.ts";
