@@ -62,7 +62,22 @@ export const state = scoped(() => ({
   sessionToken: null as string | null,
   // The last session id the server answered 404 for: it is gone there, closing it is moot (#9174).
   goneSession: null as string | null,
+  // The session that came back through the machine's return gate: its further returns are its tail (#11413).
+  returned: null as string | null,
 }));
+
+/**
+ * A knock of this session's return through the machine's gate (returngate.ts, #11375). A
+ * session that already came back through it does not wait again (#11413): its re-registration
+ * or board read goes as the return's tail. `opens` — the knock opens a new session (an
+ * initialize): never a tail. The session the knock leaves is marked as come back.
+ */
+export async function throughReturn<T>(knock: () => Promise<T>, opens = false): Promise<T> {
+  const back = !opens && !!state.sessionId && state.returned === state.sessionId;
+  const got = await throughGate(CFG.serverUrl, knock, back ? "tail" : "return");
+  state.returned = state.sessionId;
+  return got;
+}
 
 /**
  * Let go of the held session: forget it here and close it upstream (sessionclose.ts,
@@ -363,10 +378,12 @@ export async function reinitialize(): Promise<void> {
       const id = `${ID_PREFIX}bridge-reinit-${++state.reinitCounter}`;
       let result: JsonRpcMessage | null = null;
       // One probe per machine, the rest spread after it (returngate.ts, #11375).
-      await throughGate(CFG.serverUrl, () =>
-        post({ jsonrpc: "2.0", id, method: "initialize", params: state.initParams }, (m) => {
-          if (m.id === id) result = m;
-        }),
+      await throughReturn(
+        () =>
+          post({ jsonrpc: "2.0", id, method: "initialize", params: state.initParams }, (m) => {
+            if (m.id === id) result = m;
+          }),
+        true,
       );
       const got = result as JsonRpcMessage | null;
       if (!got || got.error) {

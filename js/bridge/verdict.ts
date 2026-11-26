@@ -2,10 +2,27 @@
 // effect?" — and those are different sentences. A single "retry the call" over
 // both is worse than silence: it is advice, and for a write with no version
 // guard the advice duplicates the record without a trace.
-import { BRIDGE_NAME } from "../delivery/index.ts";
+import { BRIDGE_NAME, RETURN_GATE } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { BUILD } from "./build.ts";
 import { type Outcome, UpstreamError } from "./errors.ts";
+import { type ReturnLater } from "./returngate.ts";
+import { log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
+
+/**
+ * A call whose place at the return gate is further than ~20 s away (returngate.ts notPast,
+ * #11375): not sent, answered at once with its remaining wait; the seat's return goes on.
+ */
+export function returnLater(
+  id: JsonRpcMessage["id"],
+  e: ReturnLater,
+  outcome: Outcome = UpstreamError.NOT_SENT,
+): JsonRpcMessage {
+  const s = Math.max(1, Math.ceil(e.waitMs / 1000));
+  log(`return gate: the call is not held — its place is ${e.waitMs} ms away, answered at once`);
+  return syntheticError(id, words(RETURN_GATE).returning(s), outcome, "down");
+}
 
 export function syntheticError(
   id: JsonRpcMessage["id"],

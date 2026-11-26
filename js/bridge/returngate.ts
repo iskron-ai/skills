@@ -11,9 +11,14 @@
 // returns ahead of a call: only a call that needs its session back comes here. Every other
 // upstream initialize the daemon opens (new thin bridges after a plugin reload, the
 // orchestrator's own session) goes through the same gate as "open": at once without
-// contention, at most two in flight with everything else. A bridge outside a daemon is a
-// machine of its own: its gate holds only itself (README).
+// contention, at most two in flight with everything else. A seat passes the gate once per
+// return (#11413): a session that already came back through it goes on as its return's tail
+// (its re-registration, a board read) — a slot of the two, no probe, no second draw. A call
+// whose place is further than ~20 s away is not held (notPast): it answers at once, and the
+// return goes on in its place. A bridge outside a daemon is a machine of its own: its gate
+// holds only itself (README).
 import { envName } from "../delivery/index.ts";
+import { scoped } from "../shared/scope.ts";
 import { DownError } from "./errors.ts";
 import { sleep } from "./store.ts";
 import { log } from "./streams.ts";
@@ -25,6 +30,8 @@ const envMs = (name: string, dflt: number): number => {
 /** The window's growth per waiting session and its cap; the variables are for probes. */
 const STEP_MS = envMs("BRIDGE_RETURN_STEP_MS", 1000);
 const CAP_MS = envMs("BRIDGE_RETURN_CAP_MS", 60_000);
+/** The longest a call is held at the gate: a place further away answers at once (#11375). */
+const LIMIT_MS = envMs("BRIDGE_RETURN_LIMIT_MS", 20_000);
 const AT_ONCE = 2;
 /** The random draw in [0, 1); a probe may fix it (the BRIDGE_RETURN_DRAW variable) to see it drawn. */
 const FIXED = ((v: string | undefined): number | null =>
@@ -43,6 +50,38 @@ interface Gate {
   /** Knocks out now, of either kind, the probe's included: never more than AT_ONCE. */
   out: number;
   turns: (() => void)[];
+}
+
+/** This session's place at the gate: when its drawn delay ends (0 — none drawn), and who asks. */
+const place = scoped(() => ({ at: 0, asking: new Set<() => void>() }));
+
+/** A call not held at the gate: its place is `waitMs` away; the return goes on without it. */
+export class ReturnLater extends Error {
+  waitMs: number;
+  constructor(waitMs: number) {
+    super(`the seat is returning — not sent, its place at the gate is ${waitMs} ms away`);
+    this.waitMs = waitMs;
+  }
+}
+
+/**
+ * `work` (this session's return) awaited by a call — until this session's drawn place at the
+ * gate is further than LIMIT_MS away: then the call rejects at once with ReturnLater, and the
+ * work goes on in its place in the queue; the next call finds it returned or nearer.
+ */
+export function notPast<T>(work: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const me = place;
+    const ask = (): void => {
+      const left = me.at - Date.now();
+      if (!me.at || left <= LIMIT_MS) return;
+      me.asking.delete(ask);
+      reject(new ReturnLater(left));
+    };
+    me.asking.add(ask);
+    ask();
+    void work.then(resolve, reject).finally(() => me.asking.delete(ask));
+  });
 }
 
 const gates = new Map<string, Gate>();
@@ -79,14 +118,20 @@ async function knocked<T>(g: Gate, knock: () => Promise<T>): Promise<T> {
  * waiting or out is the probe, and the other returns and opens wait for its outcome. "open" —
  * any other upstream initialize the daemon opens: never a probe; without contention (no probe,
  * nobody waiting, a free slot) it goes at once. All go at most two at a time; every return but
- * the probe draws its random delay, an open — only with more than two waiting.
+ * the probe draws its random delay, an open — only with more than two waiting. "tail" — a knock
+ * of a session that already came back through the gate (#11413): one of the two in flight, no
+ * probe, no draw.
  */
 export async function throughGate<T>(
   server: string,
   knock: () => Promise<T>,
-  kind: "return" | "open" = "return",
+  kind: "return" | "open" | "tail" = "return",
 ): Promise<T> {
   const g = gateOf(server);
+  if (kind === "tail") {
+    await turn(g);
+    return knocked(g, knock);
+  }
   if (kind === "open" && !g.probe && g.waiting === 0 && g.out < AT_ONCE) {
     g.out++;
     return knocked(g, knock);
@@ -108,6 +153,7 @@ export async function throughGate<T>(
     }
   }
   if (kind === "return") g.returns++;
+  const came = Date.now();
   try {
     g.waiting++;
     try {
@@ -125,9 +171,19 @@ export async function throughGate<T>(
         log(
           `return gate: ${g.waiting} waiting — this one goes in ${wait} ms (window ${window} ms)`,
         );
-        await sleep(wait);
+        const me = place;
+        me.at = Date.now() + wait;
+        for (const ask of [...me.asking]) ask(); // a call this far away is not held (notPast)
+        try {
+          await sleep(wait);
+        } finally {
+          me.at = 0;
+        }
       }
+      const slot = Date.now();
       await turn(g);
+      const now = Date.now();
+      log(`return gate: admitted after ${now - came} ms (waited for slot ${now - slot} ms)`);
     } finally {
       g.waiting--;
     }
