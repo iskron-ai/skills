@@ -112,9 +112,10 @@ export interface MindSliceOptions {
   account?: string;
   /**
    * The account asked anew on every read — a plugin asks its bridge, which keeps whoami per the
-   * token it presents at that moment (bridge ownwhoami.ts): nothing here remembers it.
+   * token it presents at that moment (bridge ownwhoami.ts): nothing here remembers it. `server` —
+   * the cache's first part in place of `account`: the server THAT bridge speaks to, as it says.
    */
-  identify?: () => Promise<string>;
+  identify?: () => Promise<{ handle: string; server: string }>;
 }
 
 /** One read of the slice; a refused read or an unknown account throws. */
@@ -148,19 +149,24 @@ export async function mindSlice(call: MindCall, options: MindSliceOptions = {}):
     throw new Error(why);
   };
   try {
-    if (options.account) {
-      const credential = options.account;
+    if (options.account || options.identify) {
+      const credential = options.account ?? "";
       const w = options.strict
         ? { unread: fail, pending: () => fail("the rules slice is still being read"), retry: true }
         : { unread, pending: () => words(MIND_SLICE).pending() };
       // Personal rules never cross accounts: the shared slice is keyed by the account the server
       // answers the credential for — whoami, kept per the fingerprint of the token presented now
-      // (the bridge), or asked of the bridge on every read (a plugin, `identify`); unknown — the
-      // read throws, nothing shared. The whole read, whoami included, waits ≤3 s; past it the
-      // read goes on in the background.
-      const asked = options.identify?.() ?? identityOf(credential, () => whoami(call));
-      const whole = asked.then((handle) =>
-        cachedSlice(`${credential}\n@${handle}`, () => readSlice(call, key, handle), w),
+      // (the bridge), or asked of the bridge on every read with the server it speaks to (a
+      // plugin, `identify`); unknown — the read throws, nothing shared. The whole read, whoami
+      // included, waits ≤3 s; past it the read goes on in the background.
+      const asked =
+        options.identify?.() ??
+        identityOf(credential, () => whoami(call)).then((handle) => ({
+          handle,
+          server: credential,
+        }));
+      const whole = asked.then(({ handle, server }) =>
+        cachedSlice(`${server}\n@${handle}`, () => readSlice(call, key, handle), w),
       );
       const got = await within(whole);
       if (!got) return w.pending();

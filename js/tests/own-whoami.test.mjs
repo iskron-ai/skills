@@ -21,6 +21,7 @@ test("a personal token: the bridge asks the server whoami once, however often th
     for (let i = 0; i < 3; i++) {
       const got = await b.request("iskron/whoami", {});
       assert.equal(got.result?.handle, "tester", JSON.stringify(got));
+      assert.equal(got.result?.server, fake.mcpUrl, "the server this bridge speaks to");
     }
     assert.equal(whoamis(fake).length, 1, "one whoami for the credential");
   });

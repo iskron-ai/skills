@@ -60,7 +60,7 @@ const sent = (file) =>
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l))
-    .filter((c) => c.name?.startsWith("iskron_"));
+    .filter((c) => c.name?.startsWith("iskron_") || c.name === "iskron/whoami");
 
 test("a launched child reads the human's rules from its own stand answer, under its launch word", async () => {
   const { files, env } = lay("launch", {
@@ -127,7 +127,8 @@ test("a seated session after a compaction reads the human's rules in the first r
     const mind = sent(files.calls).filter((c) => c.name !== "iskron_channel");
     assert.deepEqual(
       mind.map((c) => c.name),
-      ["iskron_me", "iskron_realm", "iskron_search"],
+      ["iskron/whoami", "iskron_realm", "iskron_search"],
+      "the account by the bridge's own whoami, then its mind",
     );
     assert.equal(mind[2].arguments.realm, "@tester/mind");
     assert.equal(mind[2].arguments.attrs_filter, "slice:agents,ways");
@@ -291,7 +292,7 @@ test("a token file switched under a live bridge: that bridge stays its own accou
       .split("\n")
       .slice(before)
       .map((l) => JSON.parse(l))
-      .filter((c) => c.name === "iskron_me");
+      .filter((c) => c.name === "iskron_me" || c.name === "iskron/whoami");
     assert.ok(
       asked.some((c) => c.pid === bobPid),
       `Bob's bridge is asked its own whoami: ${JSON.stringify(asked)}`,
@@ -353,7 +354,7 @@ test("the plugin uses strict production reads only for compaction and retries a 
       sent(files.calls)
         .filter((c) => c.name !== "iskron_channel")
         .map((c) => c.name),
-      ["iskron_me", "iskron_me", "iskron_realm", "iskron_search"],
+      ["iskron/whoami", "iskron/whoami", "iskron_realm", "iskron_search"],
     );
   } finally {
     await rec.stop();

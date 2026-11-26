@@ -185,3 +185,57 @@ for (const own of [true, false])
       `@alice/mind is not read by Bob's bridge: ${JSON.stringify(after)}`,
     );
   });
+
+/**
+ * A bridge on `server` whose account is @tester; its mind holds `rule`. `own` — it answers its
+ * own whoami (naming its server), else it is of an older build.
+ */
+function onServer(server, rule, own = true) {
+  const searches = [];
+  const bridge = {
+    searches,
+    async request(method, p) {
+      if (method === "iskron/whoami") {
+        if (!own) throw older();
+        return { handle: "tester", server };
+      }
+      if (p.name === "iskron_me") return answer(WHO);
+      if (p.name === "iskron_realm") return answer(READY);
+      searches.push(p.arguments?.realm);
+      return answer(
+        `Найдено 1 узлов:\n  📌 ${rule} (#31, phenomenon, Pt/Va/Ad, v1) — правило ${rule}`,
+      );
+    },
+  };
+  return bridge;
+}
+
+// The reviewer's scene (№5817 [585]): the server is chosen beside the grant (`use`), not by the
+// variable — an old live bridge A and a new B speak to two servers, one handle on both. Each slice
+// is the server's its bridge names: B reads its own rules by its own search, never A's.
+test("two bridges of one handle on two servers: each reads its own server's rules", async () => {
+  fresh();
+  delete process.env.ISKRON_BRIDGE_URL; // the server chosen by the file, not the variable
+  const a = onServer("https://a.test/mcp", "Rule-A");
+  const b = onServer("https://b.test/mcp", "Rule-B");
+  assert.match(await sliceBy(a), /Rule-A/);
+  const got = await sliceBy(b);
+  assert.match(got, /Rule-B/, got);
+  assert.doesNotMatch(got, /Rule-A/, "never the other server's rules");
+  assert.equal(b.searches.length, 1, "B read by its own search");
+});
+
+// A bridge of an older build names no server: its slice is its own — shared with no other bridge,
+// however alike their accounts look.
+test("bridges of an older build name no server: each its own slice, none shared", async () => {
+  fresh();
+  delete process.env.ISKRON_BRIDGE_URL;
+  const a = onServer("https://a.test/mcp", "Rule-A", false);
+  const b = onServer("https://b.test/mcp", "Rule-B", false);
+  assert.match(await sliceBy(a), /Rule-A/);
+  const got = await sliceBy(b);
+  assert.match(got, /Rule-B/, got);
+  assert.equal(b.searches.length, 1, "B read by its own search");
+  assert.match(await sliceBy(a), /Rule-A/, "A's own slice stays A's");
+  assert.equal(a.searches.length, 1, "A's slice kept for A alone");
+});

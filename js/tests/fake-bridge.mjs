@@ -448,6 +448,22 @@ process.stdin.on("data", (chunk) => {
       // A graph's name as the bridge's table names it (js/bridge/realmask.ts); unknown — as given.
       const realm = String(msg.params?.realm ?? "").trim();
       ok(msg.id, { realm: REALMS[realm] ?? realm });
+    } else if (msg.method === "iskron/whoami") {
+      // The bridge's own whoami (js/bridge/ownwhoami.ts): the handle its iskron_me reply names
+      // (per the token it started with, as callResult reads it) and its server (FB_SERVER); no
+      // handle there — no such method, as a bridge of an older build answers.
+      if (process.env.FB_CALLS)
+        appendFileSync(
+          process.env.FB_CALLS,
+          JSON.stringify({ name: msg.method, pid: process.pid, id: msg.id }) + "\n",
+        );
+      const r = callResult("iskron_me", { action: "whoami" });
+      const text = r.content?.map((c) => c.text).join("\n") ?? "";
+      const handle = /\bhandle @([A-Za-z0-9_.-]+)/.exec(text)?.[1];
+      if (r.isError) send({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: text } });
+      else if (!handle)
+        send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "no such method" } });
+      else ok(msg.id, { handle, server: process.env.FB_SERVER || "https://fake.test/mcp" });
     } else if (msg.method === "iskron/stopseat") {
       // The launcher's bridge stops an ended child's seat by its socket's token (js/bridge/
       // stopseat.ts); the answer's `how` from `${FB_REPLY}.stopseat` (stopped by default),

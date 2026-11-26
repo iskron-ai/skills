@@ -24,11 +24,15 @@ export const credentialKey = (): string => {
 /** The handle this bridge's credential speaks for now. */
 export const ownHandle = (): Promise<string> => identityOf(credentialKey(), () => whoami(callTool));
 
-/** The plugin's `whoami`: `{handle}`; a refused or unknown whoami — an error with its text. */
+/**
+ * The plugin's `whoami`: `{handle, server}` — the server this bridge speaks to (its own choice:
+ * the variable, else `server` beside the grant), so that two bridges of one handle on two
+ * servers never share a slice; a refused or unknown whoami — an error with its text.
+ */
 export function localWhoami(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
   if (msg?.method !== method("whoami")) return null;
   return ownHandle().then(
-    (handle) => ({ jsonrpc: "2.0", id: msg.id, result: { handle } }),
+    (handle) => ({ jsonrpc: "2.0", id: msg.id, result: { handle, server: CFG.serverUrl } }),
     (e: unknown) => ({
       jsonrpc: "2.0",
       id: msg.id,
