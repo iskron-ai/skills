@@ -408,6 +408,8 @@ export function setupChannel(
           return;
         }
       }
+      const told = endToldAlready(ev); // child_ended goes as any frame or batch (childended.ts)
+      if (told) return say(W.childEndedTold(told), "info");
       switch (ev.kind) {
         case "frame": {
           const frame = cardFrame(ev.frame ?? null);
@@ -419,8 +421,6 @@ export function setupChannel(
             return say(P.listening(), "info");
           }
           if (frame?.type === "status" || frame?.type === "life_check") return; // the bridge's
-          const told = endToldAlready(frame); // child_ended goes as any frame (childended.ts)
-          if (told) return say(W.childEndedTold(told), "info");
           // The frame's path (#5851): with event_kind — the kind's rule, without — its own stack (#4957).
           // The launcher's word to its working lead steers its turn whatever its stack (#7505).
           if (isLifeCheck(frame)) return lifeCheck(session, child, frame as Frame);

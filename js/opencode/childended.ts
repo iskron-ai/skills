@@ -1,7 +1,9 @@
 // The server's word of a child's end (graph @nks/nks-dev, nodes #11362, #11359): the parent of an
-// ended child gets a platform frame `notice` child_ended {standing_id, standing, by, reason}. It
-// goes to the parent as any server frame (channel.ts deliver); the plugin's own end word for that
-// child (leads.ts finish) is then not also sent. The rule for a server without the notice: until
+// ended child gets an ordinary queued platform message (like card_unanswered): provenance.via
+// "platform", provenance.notice "child_ended", provenance.notice_data {standing_id, standing, by,
+// reason}, and a body — the server's text in the parent's language. It goes to the parent as any
+// server frame, its body as is — the bridge batches it as a wake-up (backlog.ts); the plugin's own
+// end word for that child (leads.ts finish) is then not also sent. For a server without it: until
 // the first notice is seen in the process the end goes as before (the plugin's word, then the
 // run's end) and a notice of an end already told is not delivered; once seen, the run ends first
 // and the plugin's own word goes only if no notice came within the window. The notes are
@@ -23,11 +25,12 @@ export interface ChildEnded {
 
 const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
 
-/** A child_ended notice — `{type:"notice", notice|kind:"child_ended", …}` or its data — or null. */
+/** The child_ended notice_data of a platform message, or null. */
 export function childEndedOf(frame: unknown): ChildEnded | null {
   const f = (frame ?? {}) as Record<string, any>;
-  if (f.type !== "notice" || (f.notice ?? f.kind ?? f.event) !== "child_ended") return null;
-  const d = { ...f, ...(f.data && typeof f.data === "object" ? f.data : {}) };
+  const p = f.provenance;
+  if (f.type !== "message" || p?.via !== "platform" || p.notice !== "child_ended") return null;
+  const d = p.notice_data && typeof p.notice_data === "object" ? p.notice_data : {};
   const n = {
     standing_id: str(d.standing_id),
     standing: str(d.standing),
@@ -109,12 +112,16 @@ export function serverEnded(seat: string | null, child: string, ms = WINDOW_MS):
 }
 
 /**
- * A channel frame: a child_ended is noted for the child's waiting end; its seat when the plugin
- * already told the parent of that end — the frame is not delivered then. null — deliver as any.
+ * A channel event — a frame, or a wake-up/stale batch of frames: each child_ended in it is noted
+ * for the child's waiting end. When it carries nothing but notices of ends the plugin already told
+ * the parent, their seats — the event is not delivered then (a second turn); null — deliver as any.
  */
-export function endToldAlready(frame: unknown): string | null {
-  const n = childEndedOf(frame);
-  return n && noteChildEnded(n) ? (n.standing ?? n.standing_id ?? "?") : null;
+export function endToldAlready(ev: { frame?: unknown; frames?: unknown[] | null }): string | null {
+  const frames = ev.frames?.length ? ev.frames : ev.frame ? [ev.frame] : [];
+  const notices = frames.map(childEndedOf);
+  if (!notices.some(Boolean)) return null;
+  const told = notices.map((n) => (n && noteChildEnded(n) ? (n.standing ?? n.standing_id) : null));
+  return told.every(Boolean) ? told.join(", ") : null;
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */

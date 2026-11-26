@@ -10908,18 +10908,29 @@ test("the bridge the plugin raises speaks the session language: accept-language 
 // is not delivered; once seen, the run ends first and the plugin's word goes only if no notice
 // came within the window. The process-wide mark is reset around each probe.
 const KNOWN = "__iskronChildEndedKnown";
+// The server's shape (nks-api): an ordinary queued platform message, like card_unanswered; its
+// body — the server's text in the parent's language, passed as is.
+const CE_BODY = "Субагент host.repo.opus-5.sub-1 закончил: сессия кончена.";
 const childEnded = (standing) => ({
-  type: "notice",
-  notice: "child_ended",
-  standing_id: "sid-sub-1",
-  standing,
-  by: "self",
-  reason: "session_closed",
-  body: `child_ended: ${standing} (session_closed)`,
+  type: "message",
+  id: "ce-msg-1",
+  received_at: "2026-11-26T10:00:00Z",
+  body: CE_BODY,
+  provenance: {
+    via: "platform",
+    auth: "none",
+    notice: "child_ended",
+    notice_data: { standing_id: "sid-sub-1", standing, by: "self", reason: "session_ended" },
+  },
 });
-const noticeTo = (b, pid, standing) => {
+// The bridge of pi and OpenCode gives a platform frame as a wake-up batch (backlog.ts); a lone frame too.
+const noticeTo = (b, pid, standing, kind = "backlog") => {
   const f = childEnded(standing);
-  appendFileSync(`${b.events}.${pid}`, event("frame", { frame: f, raw: JSON.stringify(f) }));
+  const ev =
+    kind === "backlog"
+      ? event("backlog", { pending: 0, frames: [f], text: `Побудка: кадров 1\n\n${f.body}` })
+      : event("frame", { frame: f, raw: JSON.stringify(f) });
+  appendFileSync(`${b.events}.${pid}`, ev);
 };
 const rootTurns = (rec) =>
   rec.prompts.filter((p) => p.sessionID === "root").length +
@@ -10943,27 +10954,51 @@ test("child_ended on a server first seen sending it: the plugin's word went firs
   }
 });
 
-test("child_ended on a server known to send it: one parent turn — the server's notice only, steering", async () => {
-  globalThis[KNOWN] = true;
-  const { b, rec, rootPid, calls } = await leadChild("ce-known", {
-    ISKRON_OPENCODE_CHILD_ENDED_MS: 5000,
+for (const kind of ["backlog", "frame"])
+  test(`child_ended (${kind}) on a server known to send it: one parent turn — the server's body as is, nothing of the plugin's own`, async () => {
+    globalThis[KNOWN] = true;
+    const { b, rec, rootPid, calls } = await leadChild(`ce-known-${kind}`, {
+      ISKRON_OPENCODE_CHILD_ENDED_MS: 5000,
+    });
+    try {
+      await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+      settle(rec);
+      await until(
+        () => callsIn(calls).some((c) => c.name === "iskron/end"),
+        "the child's run ends first",
+      );
+      noticeTo(b, rootPid, `@tester:${SUB}`, kind);
+      await until(() => /о конце субагента .* сказал сервер/.test(rec.said()), "the end heard");
+      await until(() => rootTurns(rec) > 0, "the notice in the parent");
+      await delay(300);
+      assert.equal(ends(rec).length, 0, "no «КОНЧЕН» of the plugin's own");
+      const into = rec.prompts.filter((p) => p.sessionID === "root");
+      assert.equal(into.length, 1, `the server's notice in the parent:\n${rec.said()}`);
+      if (kind === "backlog") assert.equal(into[0].delivery, "queue", "a queued wake-up");
+      assert.ok(into[0].text.includes(CE_BODY), `the body as is:\n${into[0].text}`);
+      assert.doesNotMatch(into[0].text, /session_ended|sid-sub-1/, "no text built from the fields");
+      assert.equal(rootTurns(rec), 1, "one turn in the parent");
+    } finally {
+      await rec.stop();
+      delete globalThis[KNOWN];
+    }
   });
+
+test("a platform message without notice child_ended is no child's end: the plugin's own word after the window", async () => {
+  globalThis[KNOWN] = true;
+  const { b, rec, rootPid } = await leadChild("ce-other", { ISKRON_OPENCODE_CHILD_ENDED_MS: 800 });
   try {
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
     settle(rec);
-    await until(
-      () => callsIn(calls).some((c) => c.name === "iskron/end"),
-      "the child's run ends first",
-    );
-    noticeTo(b, rootPid, SUB);
-    await until(() => /о конце субагента .* сказал сервер/.test(rec.said()), "the end heard");
-    await delay(300);
-    assert.equal(ends(rec).length, 0, "no «КОНЧЕН» of the plugin's own");
-    const into = rec.prompts.filter((p) => p.sessionID === "root");
-    assert.equal(into.length, 1, `the server's notice in the parent:\n${rec.said()}`);
-    assert.equal(into[0].delivery, "steer");
-    assert.match(into[0].text, /child_ended/);
-    assert.equal(rootTurns(rec), 1, "one turn in the parent");
+    const f = childEnded(`@tester:${SUB}`);
+    f.provenance = { ...f.provenance, notice: "card_unanswered" };
+    const top = { type: "notice", notice: "child_ended", standing: `@tester:${SUB}` };
+    for (const x of [f, top])
+      appendFileSync(
+        `${b.events}.${rootPid}`,
+        event("frame", { frame: x, raw: JSON.stringify(x) }),
+      );
+    await until(() => ends(rec).length === 1, "the plugin's word: neither was a child_ended");
   } finally {
     await rec.stop();
     delete globalThis[KNOWN];
