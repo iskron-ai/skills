@@ -50,6 +50,31 @@ test("all sessions lose MCP at once: one initialize from the machine first, then
   );
 });
 
+// #11375 (№5817 [585]): every return after the probe's outcome draws its delay — two returns at
+// once too, not only a crowd. The window at its default (1 s per waiting); the draw fixed at 0.9
+// so that it is seen drawn: the second initialize goes no earlier than the probe's answer plus
+// 900 ms — never two initializes from the machine within the first second.
+test("two sessions lose MCP at once: the second returns after the probe's outcome and a drawn delay — never two initializes in the first second", async () => {
+  await withMux(
+    async ({ fake, session }) => {
+      const all = await sessions(session, 2);
+      const from = fake.state.initAt.length;
+      await fake.control({ kill_session: true, initDelayMs: INIT_MS });
+      const back = await Promise.all(all.map(look));
+      for (const r of back) assert.ok(!r.result?.isError, JSON.stringify(r));
+      const at = fake.state.initAt.slice(from);
+      assert.equal(at.length, 2, `one initialize each: ${at.length}`);
+      const [probe, second] = at;
+      assert.ok(
+        second - probe >= INIT_MS + 900 - 50,
+        `the second after the probe's answer and its drawn delay: ${second - probe} ms`,
+      );
+      assert.ok(second - probe >= 1000, "never two initializes in the first second");
+    },
+    { daemonEnv: { ISKRON_BRIDGE_RETURN_DRAW: "0.9" } },
+  );
+});
+
 test("no session returns without a call: only the sessions that call knock", async () => {
   await withMux(
     async ({ fake, session }) => {

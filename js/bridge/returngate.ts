@@ -4,8 +4,8 @@
 // as the number of seats, not of machines. Now the first session that comes to return is the
 // probe, one per machine; the others that meet 404 or come to return (a re-registration after a
 // self-update, a plugin reload, a daemon handover) wait for its outcome. The probe returned —
-// the waiting go at most two at a time; with more than two waiting each draws a random delay in
-// a window that grows with their number (capped at 60 s). The probe met 502/503/504 or no
+// the waiting go at most two at a time, each return after a random delay in a window that grows
+// with their number (1 s each, capped at 60 s) — two returns at once too. The probe met 502/503/504 or no
 // connection — the down window (downwindow.ts) stands: the waiting do not knock, their calls
 // answer «not sent», and the next probe goes by the window's ladder (its file lock). Nothing
 // returns ahead of a call: only a call that needs its session back comes here. Every other
@@ -26,6 +26,12 @@ const envMs = (name: string, dflt: number): number => {
 const STEP_MS = envMs("BRIDGE_RETURN_STEP_MS", 1000);
 const CAP_MS = envMs("BRIDGE_RETURN_CAP_MS", 60_000);
 const AT_ONCE = 2;
+/** The random draw in [0, 1); a probe may fix it (the BRIDGE_RETURN_DRAW variable) to see it drawn. */
+const FIXED = ((v: string | undefined): number | null =>
+  v && Number(v) >= 0 && Number(v) < 1 ? Number(v) : null)(
+  process.env[envName("BRIDGE_RETURN_DRAW")],
+);
+const draw = (): number => FIXED ?? Math.random();
 
 interface Gate {
   /** The probe's outcome while it is out: null — answered; a DownError — the server is down. */
@@ -72,8 +78,8 @@ async function knocked<T>(g: Gate, knock: () => Promise<T>): Promise<T> {
  * handshake after a handover, a seat's re-registration): the first return to come when none is
  * waiting or out is the probe, and the other returns and opens wait for its outcome. "open" —
  * any other upstream initialize the daemon opens: never a probe; without contention (no probe,
- * nobody waiting, a free slot) it goes at once. All go at most two at a time; with more than
- * two waiting each draws its random delay.
+ * nobody waiting, a free slot) it goes at once. All go at most two at a time; every return but
+ * the probe draws its random delay, an open — only with more than two waiting.
  */
 export async function throughGate<T>(
   server: string,
@@ -110,10 +116,12 @@ export async function throughGate<T>(
         // The server is down: the window stands — no knock; the call answers «not sent».
         if (down instanceof DownError) throw down;
       }
-      // A few behind the two in flight just take their turns; a crowd spreads over the window.
-      if (g.waiting > AT_ONCE) {
+      // Every return after the probe's outcome spreads over the window (#11375): two returns at
+      // once are not two knocks in the same second. An open spreads only in a crowd: a few
+      // behind the two in flight just take their turns.
+      if (kind === "return" || g.waiting > AT_ONCE) {
         const window = Math.min(CAP_MS, STEP_MS * g.waiting);
-        const wait = Math.floor(Math.random() * window);
+        const wait = Math.floor(draw() * window);
         log(
           `return gate: ${g.waiting} waiting — this one goes in ${wait} ms (window ${window} ms)`,
         );
