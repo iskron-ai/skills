@@ -298,3 +298,46 @@ test("a child that stands again while its deferred revoke waits for the launcher
     rmSync(mark, { force: true });
   }
 });
+
+// The child stood on another role than its parent (#1172 under a root on #931): the revoke after
+// its end names the child's own seat — its role and name — never the launcher's role.
+test("a child on another role than its parent: the revoke after its end names the child's own seat", async () => {
+  const name = "seatoff-own-role";
+  const calls = join(SANDBOX, `${name}.calls`);
+  writeFileSync(calls, "");
+  const own = { ...SUB_PLACE, karta: "1172" };
+  const { b, rec } = await leadChild(name, { FB_CALLS: calls }, undefined, own);
+  const mark = endMark("child");
+  try {
+    rec.emit({
+      type: "session.text.ended",
+      data: { sessionID: "child", ordinal: 0, text: "EN-голова закреплена" },
+    });
+    await delay(150);
+  } finally {
+    await rec.stop();
+  }
+  writeFileSync(mark, JSON.stringify({ session: "child", at: new Date().toISOString() }), {
+    mode: 0o600,
+  });
+  const sent = callsIn(calls).length;
+  const second = await plugin(
+    { ...b.env, FB_RESUME: rootBack(name) },
+    { keepMarker: true, sessions: SESSIONS },
+  );
+  try {
+    await until(() => second.tools().has("iskron_case"), "the tools", 8000);
+    await until(() => second.synthetics.some((s) => OFF.test(s.text)), "the seat's word", 8000);
+    const revokes = callsIn(calls)
+      .slice(sent)
+      .filter((c) => c.name === "iskron_channel" && c.arguments?.action === "revoke");
+    assert.deepEqual(
+      revokes.map((c) => c.arguments),
+      [{ action: "revoke", standing: SUB, realm: "@nks/nks-dev", karta: "1172" }],
+      "the child's own role, not the launcher's #931",
+    );
+  } finally {
+    await second.stop();
+    rmSync(mark, { force: true });
+  }
+});

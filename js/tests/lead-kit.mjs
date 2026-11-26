@@ -89,7 +89,8 @@ export const endMark = (session) =>
     `opencode-ended.${createHash("sha256").update(session).digest("hex").slice(0, 16)}.json`,
   );
 
-export async function leadChild(name, env = {}, sessions) {
+/** `childPlace` — the seat the child's «held» names (another role than the root's, if a probe asks). */
+export async function leadChild(name, env = {}, sessions, childPlace = SUB_PLACE) {
   const b = bridgeEnv(name, { FB_TOOLS: LEAD_TOOLS, ...env });
   const rec = await plugin(b.env, {
     sessions: sessions ?? [
@@ -105,7 +106,7 @@ export async function leadChild(name, env = {}, sessions) {
     await until(() => rec.said().includes("мост держит место k-root"), "the root's held word");
     await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
     const childPid = pidsOf(b.log)[1];
-    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: SUB_PLACE }));
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: childPlace }));
     await until(() => rec.said().includes("мост держит место k-sub"), "the child's held word");
     return { b, rec, rootPid, childPid };
   } catch (e) {

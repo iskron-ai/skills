@@ -86,7 +86,13 @@ export interface Snapshot {
 }
 
 /** What a loss marker record of a child says about its lead. */
-export type Returned = Partial<Snapshot> & { name?: string; of?: Place | null };
+export type Returned = Partial<Snapshot> & {
+  name?: string;
+  of?: Place | null;
+  /** The child's own seat as held; an older marker without it — its hold record by `key`. */
+  seat?: Place | null;
+  key?: string | null;
+};
 
 export interface LeadDoors {
   say: Say;

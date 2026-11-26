@@ -17,7 +17,14 @@ import { processStart } from "./procstart.ts";
 import { entryOf, type Home, type LostEntry } from "./records.ts";
 
 type Lost = { at: string; entries: LostEntry[] };
-type Held = KeptSlot & { place?: { name: string } | null; moved?: boolean };
+type Held = KeptSlot & {
+  place?: { name: string; realm?: string; karta?: string } | null;
+  moved?: boolean;
+};
+
+/** The seat the slot holds, whole — graph, role and name; part of it — none. */
+const ownSeat = (p: Held["place"]): LostEntry["seat"] =>
+  p?.name && p.realm && p.karta ? { realm: p.realm, karta: p.karta, name: p.name } : null;
 
 const PREFIX = "opencode-lost";
 /** The term of an older build's file and of a move record: instances come up in seconds. */
@@ -79,6 +86,7 @@ export function writeLostMarker(
         session: s.session as string,
         of: s.satelliteOf,
         name: s.place?.name,
+        seat: ownSeat(s.place),
         stoodAt: s.key ? stoodAtOf(authDir, s.key) : undefined,
       }),
     );

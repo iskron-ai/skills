@@ -12,8 +12,12 @@
 // seat is taken off by its launcher's bridge (offSeat), and the parent hears one word that
 // does not wake it. Contract — leaddoors.ts, words — leadwords.ts.
 
+import { readFileSync } from "node:fs";
+
 import { tool } from "../delivery/index.ts";
 import { sameSeat } from "../shared/seat.ts";
+import { holdFilePathOf } from "../shared/standings.ts";
+import { authDir } from "./bridge-io.ts";
 import { createCascade } from "./cascade.ts";
 import type { LeadDoors, Leads, Returned, RunEnd } from "./leaddoors.ts";
 import type { Up } from "./leadframes.ts";
@@ -37,9 +41,23 @@ interface Lead {
 const roomNo = (room: unknown): string => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
 const names = (place: Place | undefined, child: string, s: string): boolean =>
   s === child || (!!place?.name && (s === place.name || s.endsWith(`:${place.name}`)));
-/** The satellite seat a marker record names: its launcher's graph and role, the child's name; none — null. */
-const seatOf = (was: Returned): Place | null =>
-  was.name && was.of ? { ...was.of, name: was.name } : null;
+/**
+ * The child's own seat a marker record names — its graph, role and name as it held them; an
+ * older record without it — the child's hold record by its key. Never the launcher's role: a
+ * child may stand on another role than its parent, and a revoke by the parent's role misses the
+ * child's seat. Not known — null: nothing is revoked by a guess.
+ */
+function seatOf(was: Returned): Place | null {
+  if (was.seat?.name && was.seat.realm && was.seat.karta) return was.seat;
+  if (!was.key || !was.name) return null;
+  try {
+    const rec = JSON.parse(readFileSync(holdFilePathOf(authDir(), was.key), "utf8"));
+    if (rec?.name !== was.name || !rec.realm || rec.karta == null) return null;
+    return { realm: String(rec.realm), karta: String(rec.karta), name: was.name };
+  } catch {
+    return null;
+  }
+}
 
 export function createLeads(d: LeadDoors): Leads {
   const leads = new Map<string, Lead>();
