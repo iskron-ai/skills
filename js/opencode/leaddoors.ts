@@ -127,7 +127,11 @@ export function leadDoors(
       await flush(child).catch(() => {});
       const got: any = await slots
         .get(child)
-        ?.bridge.request(method("end"), {}, { timeoutMs: END_MS, service: true })
+        ?.bridge.request(
+          method("end"),
+          { event: "subagent_ended" },
+          { timeoutMs: END_MS, service: true },
+        )
         .catch(() => null);
       if (!got?.ended) return null;
       // A bare name (an older bridge) is no seat: it confirms nothing.

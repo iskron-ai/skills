@@ -328,6 +328,11 @@ export async function startFakeNks(opts = {}) {
     turned404: false, // апгрейд по адресу, который повернул connect того же места, — HTTP 404, как у контура
     latestToken: new Map(), // имя места → адрес сокета последнего connect
     stopAbsent: opts.stopAbsent ?? 0, // 404 | 405: api без снятия по ws-токену (№675)
+    // The end event by the ws token (#11362): POST /api/channel/ws/{token}/event {event,
+    // session_id?}. endEvent: true — the route answers 200 {ended:[ids]}; 404 (no rule) | 405 —
+    // an api without it, the shape deployed today (the default: 404).
+    endEvent: opts.endEvent ?? 404,
+    endEvents: [], // every end event's body as it came, answered or not
     takeInWindow: null, // "karta:name": чужой connect сразу после последней сверки моста (№677)
     stopKeeps: new Set(), // "karta:name": места, которые держит другой живой канал, — снятие по токену их не снимает
     beforeStopReply: null, // () => void: проба вклинивается в снятие по токену до ответа
@@ -683,9 +688,17 @@ export async function startFakeNks(opts = {}) {
     // текущий, проверка и снятие разом; 200 перечисляет лишь реально снятые; иначе 404 с правилом
     // ws_token_not_current, ничего не тронуто. stopAbsent: 404 | 405 — api без этой ручки (404 без
     // правила, как незнакомый маршрут). beforeStopReply — проба вклинивается до ответа.
-    if (p.startsWith("/api/channel/ws/") && p.endsWith("/stop") && req.method === "POST") {
-      st.counts.stops++;
-      if (st.stopAbsent) return json(res, st.stopAbsent, { title: "Not Found" });
+    const endRoute = p.startsWith("/api/channel/ws/") && p.endsWith("/event");
+    if (endRoute && req.method === "POST") {
+      st.endEvents.push(JSON.parse((await body(req)) || "{}"));
+      if (st.endEvent !== true) return json(res, st.endEvent, { title: "Not Found" });
+    }
+    if (
+      ((p.startsWith("/api/channel/ws/") && p.endsWith("/stop")) || endRoute) &&
+      req.method === "POST"
+    ) {
+      if (!endRoute) st.counts.stops++;
+      if (st.stopAbsent && !endRoute) return json(res, st.stopAbsent, { title: "Not Found" });
       const refuse = st.stopRefuseNext.shift();
       if (refuse) {
         if (refuse.delayMs) await new Promise((r) => setTimeout(r, refuse.delayMs));
@@ -693,7 +706,7 @@ export async function startFakeNks(opts = {}) {
       }
       takeInWindow();
       st.beforeStopReply?.();
-      const tok = p.slice("/api/channel/ws/".length, -"/stop".length);
+      const tok = p.slice("/api/channel/ws/".length, endRoute ? -"/event".length : -"/stop".length);
       const name = st.wsTokens.get(tok);
       const chan = st.channels.get(st.wsChannel.get(tok));
       if (name === undefined || st.latestToken.get(name) !== tok || !chan?.places.size)
@@ -710,6 +723,7 @@ export async function startFakeNks(opts = {}) {
         ended.push({ standing_id: pl.standing_id, ended_at: new Date().toISOString() });
       }
       if (st.stopReplyDelayMs) await new Promise((r) => setTimeout(r, st.stopReplyDelayMs));
+      if (endRoute) return json(res, 200, { ended: ended.map((e) => e.standing_id) });
       return json(res, 200, {
         channel_id: st.wsChannel.get(tok),
         ended_by: "self",

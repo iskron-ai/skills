@@ -16,6 +16,7 @@ import {
 import { CFG } from "./config.ts";
 import { heldSince, recordAt, seatKeyOf } from "./deadseat.ts";
 import { closeDeadSeats } from "./deadstop.ts";
+import { END_EVENTS, type EndEvent } from "./endreport.ts";
 import { endOnWord } from "./endword.ts";
 import { localSocketPathOf, releaseStanding, standingIdIn } from "./hold.ts";
 import { keepHoldRecord } from "./holdkeep.ts";
@@ -25,6 +26,7 @@ import { holdLate } from "./latehold.ts";
 import { leavingLine, released } from "./muxhold.ts";
 import { handoverPauseKey, suspended } from "./pauserecord.ts";
 import { releaseSatelliteClaims } from "./satellite.ts";
+import { endSatellite } from "./satend.ts";
 import { publishStatusTo } from "./status.ts";
 import { statusAddress } from "./statusaddr.ts";
 import { sleep } from "./store.ts";
@@ -70,12 +72,21 @@ interface Dead {
  * handover — the daemon hands seats to a successor: a non-satellite seat stays open.
  * now — the harness ended the agent (its session deleted): its own seats are revoked at once.
  */
-export function closeRun(why: string, handover: boolean, now = false): Promise<RunEnd> {
+export function closeRun(
+  why: string,
+  handover: boolean,
+  now = false,
+  event: EndEvent | null = null,
+): Promise<RunEnd> {
   return (R.run ??= (async () => {
     // Socket and key go FIRST, before any network call: a harness killing us soon must not find a live key (graph @nks/nks-dev, node #4895).
     // Else the watchdog would follow a dead socket; case exits and revoke are session calls, no socket needed.
     const addr = statusAddress();
     const places = satellitePlaces();
+    // A satellite's own socket and seat ids, before the release forgets them: its end is reported
+    // by that token (satend.ts).
+    const satSocket = CFG.satellite ? H.currentUrl : null;
+    const satIds = new Map(places.map((s) => [s, standingIdIn(s.realm)]));
     // A satellite paused for a plugin reload (suspend.ts) keeps seat, cases and busy for the new bridge.
     const paused = suspended();
     const closing = (!handover || CFG.satellite) && !paused;
@@ -107,7 +118,7 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     await Promise.all([paused ? null : leaveJoinedCases(), flushUsage(spent)]);
     let end: RunEnd = paused
       ? { failed: [], revoked: [], probably: [] }
-      : await revokeSatellitePlaces(places);
+      : await endSatellite(places, satSocket, event ?? "subagent_ended", satIds);
     if (CFG.satellite && !paused)
       releaseSatelliteClaims(end.failed.length > 0 || end.probably.length > 0);
     const status = addr?.url ?? null;
@@ -116,7 +127,10 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     // machine is kept by the stop by this socket's token (endword.ts, #9232).
     const free = ended ? await notHeldAgain(own, eras) : own;
     let left = own;
-    if (ended) ({ end, left } = await endOnWord(free, free[0] === own[0] ? socket : null, ids));
+    if (ended) {
+      const sock = free[0] === own[0] ? socket : null;
+      ({ end, left } = await endOnWord(free, sock, ids, event ?? "session_closed"));
+    }
     if (dying && left.length) {
       const mine = { places: left, ids, eras, status, socket: left[0] === own[0] ? socket : null };
       R.dead = R.dead ? withLate(mine, R.dead) : mine;
@@ -273,7 +287,9 @@ export function localEnd(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
   if (msg?.method !== method("end")) return null;
   const answer = (result: unknown): JsonRpcMessage => ({ jsonrpc: "2.0", id: msg.id, result });
   if (suspended()) return Promise.resolve(answer({ ended: false }));
-  return closeRun(words(RUN_END).pluginEnd(), false, true)
+  const named = (msg.params as { event?: unknown } | undefined)?.event;
+  const event = END_EVENTS.find((e) => e === named) ?? null;
+  return closeRun(words(RUN_END).pluginEnd(), false, true, event)
     .then(({ failed, revoked, probably }) => answer({ ended: true, failed, revoked, probably }))
     .catch((e: Error) => answer({ ended: false, word: e.message }));
 }

@@ -2912,6 +2912,12 @@ test("a deleted session ends its agent: the bridge is told to end before it goes
       sent.some((c) => c.name === "iskron/end" && c.pid === pid),
       `the bridge was told to end:\n${JSON.stringify(sent)}`,
     );
+    // The end event the bridge reports by its token (#11362): the harness deleted the session.
+    assert.deepEqual(
+      sent.find((c) => c.name === "iskron/end").arguments,
+      { event: "session_deleted" },
+      "the bridge is told how the session ended",
+    );
     assert.ok(!sent.some((c) => c.name === "iskron/away"), "a deletion is no absence");
     assert.equal(rec.prompts.length, 0, "no word into the deleted session");
   } finally {
@@ -5991,6 +5997,11 @@ test("the owner's stop of a root in one instance takes down its child's satellit
     assert.ok(
       callsIn(calls).some((c) => c.name === "iskron/end" && c.pid === childPid),
       "the child's satellite is taken down by its own bridge",
+    );
+    assert.deepEqual(
+      callsIn(calls).find((c) => c.name === "iskron/end" && c.pid === childPid).arguments,
+      { event: "subagent_ended" },
+      "the child's bridge is told a subagent ended (#11362)",
     );
     assert.deepEqual(
       B.interrupts,
