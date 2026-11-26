@@ -50,14 +50,23 @@ export function rememberMindRealmList(text: string, structured?: unknown): void 
   C.listing = { text, structured, at: Date.now() };
 }
 
-async function ownMind(call: MindCall, key: object): Promise<string | null> {
+/** The account the server answers this call's credential for: its handle from whoami. */
+async function whoami(call: MindCall): Promise<string> {
+  const who = await call(tool("me"), { action: "whoami" });
+  if (who.isError) throw new Error(who.text);
+  const handle = /\bhandle @([A-Za-z0-9_.-]+)/.exec(who.text)?.[1] ?? "";
+  if (!handle) throw new Error("account handle unknown");
+  return handle;
+}
+
+/**
+ * The account's own mind, or null. `handle` — the account as whoami named it just now; another
+ * one than this key remembered drops what it remembered (an account switched under the bridge).
+ */
+async function ownMind(call: MindCall, key: object, handle?: string): Promise<string | null> {
   const cache = cacheFor(key);
-  if (!cache.handle) {
-    const who = await call(tool("me"), { action: "whoami" });
-    if (who.isError) throw new Error(who.text);
-    cache.handle = /\bhandle @([A-Za-z0-9_.-]+)/.exec(who.text)?.[1] ?? "";
-    if (!cache.handle) throw new Error("account handle unknown");
-  }
+  if (handle && handle !== cache.handle) Object.assign(cache, { handle, result: null, expires: 0 });
+  if (!cache.handle) cache.handle = await whoami(call);
   const address = `@${cache.handle}/mind`;
   if (cache.result !== null && Date.now() < cache.expires) return cache.result ? address : null;
   cache.listing = C.listing && Date.now() - (C.listing.at ?? 0) < 10_000 ? C.listing : null;
@@ -100,9 +109,9 @@ export interface MindSliceOptions {
 }
 
 /** One read of the slice; a refused read or an unknown account throws. */
-async function readSlice(call: MindCall, key: object): Promise<SliceRead> {
+async function readSlice(call: MindCall, key: object, handle?: string): Promise<SliceRead> {
   const W = words(MIND_SLICE);
-  const realm = await ownMind(call, key);
+  const realm = await ownMind(call, key, handle);
   if (!realm) return { block: W.absent(), mind: null };
   const got = await call(tool("search"), { ...SLICE_ARGS, realm });
   if (got.isError) throw new Error(brief(got.text));
@@ -130,10 +139,14 @@ export async function mindSlice(call: MindCall, options: MindSliceOptions = {}):
     throw new Error(why);
   };
   try {
-    if (options.account)
+    if (options.account) {
+      // Personal rules never cross accounts: the shared slice is keyed by the account the server
+      // answers this credential for — asked now, on every read, so an account switched under
+      // the same grant directory reads its own; unknown — the read below throws, nothing shared.
+      const handle = await whoami(call);
       return await cachedSlice(
-        options.account,
-        () => readSlice(call, key),
+        `${options.account}\n@${handle}`,
+        () => readSlice(call, key, handle),
         options.strict
           ? {
               unread: fail,
@@ -142,6 +155,7 @@ export async function mindSlice(call: MindCall, options: MindSliceOptions = {}):
             }
           : { unread, pending: () => words(MIND_SLICE).pending() },
       );
+    }
     return (await readSlice(call, key)).block;
   } catch (e) {
     if (options.strict) throw new Error(brief((e as Error).message), { cause: e });

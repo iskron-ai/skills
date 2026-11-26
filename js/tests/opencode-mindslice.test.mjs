@@ -168,6 +168,57 @@ test("two seated sessions of one plugin read the human's rules by one search", a
   }
 });
 
+// Personal rules never cross accounts: the account switched under the same grant directory (a new
+// login), the next bridge asks whoami, reads its own account's slice — never the previous one's.
+test("an account switched under the same grant directory: Bob's bridge reads Bob's slice, never Alice's", async () => {
+  const { files, env } = lay("account-switch");
+  const as = (who, rule) => {
+    writeFileSync(`${files.reply}.iskron_me`, `Вызывающая идентичность: @${who} · handle @${who}`);
+    writeFileSync(
+      `${files.reply}.iskron_realm`,
+      `Доступные графы (1) — адресуй их как @owner/slug:\n    @${who}/mind  r204  mind · 2026-09-23`,
+    );
+    writeFileSync(
+      `${files.reply}.iskron_search`,
+      `Найдено 1 узлов:\n  📌 ${rule} (#31, phenomenon, Pt/Va/Ad, v1) — правило ${who}\n`,
+    );
+  };
+  const rec = await plugin(env);
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "the server's tools", 8000);
+    const rulesOf = async (s) => {
+      await rec.call("iskron_channel", { action: "connect" }, s);
+      const pid = Number(readFileSync(files.log, "utf8").trim().split("\n").at(-1).split(/\s+/)[1]);
+      appendFileSync(
+        `${files.events}.${pid}`,
+        JSON.stringify({ kind: "held", automatic: false, key: `k-${s}`, place: PLACE }) + "\n",
+      );
+      await until(() => rec.said().includes(`мост держит место k-${s}`), `held ${s}`);
+      for (const cb of rec.hooks.compaction ?? []) await cb({ sessionID: s, system: [] });
+      const req = { sessionID: s, system: [], messages: [], tools: {}, options: {} };
+      for (const cb of rec.hooks.context ?? []) await cb(req);
+      return req.system.map((p) => p.text).join("\n");
+    };
+    as("alice", "Правило Алисы");
+    assert.match(await rulesOf("s-alice"), /Правило Алисы/);
+    const before = sent(files.calls).filter((c) => c.name === "iskron_search").length;
+    as("bob", "Правило Боба");
+    const bob = await rulesOf("s-bob");
+    assert.match(bob, /Правило Боба/, bob);
+    assert.doesNotMatch(bob, /Алис/, "never Alice's block");
+    const searches = sent(files.calls)
+      .filter((c) => c.name === "iskron_search")
+      .slice(before);
+    assert.deepEqual(
+      searches.map((c) => c.arguments.realm),
+      ["@bob/mind"],
+      "one request for Bob",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
 test(
   "a root seated by its cover reads the human's rules beside its seating word",
   { timeout: 90_000 },

@@ -33,7 +33,8 @@ test("N sessions of one daemon standing together read the rules slice once", asy
     await ctx.fake.control({ mind: { rules: RULES } });
     const { texts } = await wave(ctx, 4, "many");
     assert.equal(slices(ctx.fake), 1, "one slice read for the account");
-    assert.equal(whoamis(ctx.fake), 1, "one whoami for the account");
+    // The account is asked on every read: the key is the account the server answers for.
+    assert.equal(whoamis(ctx.fake), 4, "one whoami per session's read");
     for (const t of texts) assert.equal(sliceIn(t)?.split("\n")[0], W.head(1), t);
   });
 });

@@ -10,7 +10,10 @@ import { CFG } from "./config.ts";
 import { automaticSeat } from "./seatorigin.ts";
 import { readLatest, staleNotice } from "./update.ts";
 
-/** The session's credential — server, grant directory, token — names its account for the cache. */
+/**
+ * The session's credential — server, grant directory, token (the variable's or the file's) — the
+ * cache key's first part; the handle whoami names on each read completes it (mindslice.ts).
+ */
 const account = (): string => {
   const pat = CFG.pat ? createHash("sha256").update(CFG.pat).digest("hex").slice(0, 16) : "";
   return `${CFG.serverUrl}\n${CFG.authDir}\n${pat}`;

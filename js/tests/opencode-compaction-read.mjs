@@ -63,7 +63,7 @@ for (const failure of ["OFFLINE", "readiness refusal", "search refusal"]) {
     assert.deepEqual(
       calls.slice(before),
       failure === "search refusal"
-        ? ["iskron_search"]
+        ? ["iskron_me", "iskron_search"] // the account asked on every read; its mind remembered
         : ["iskron_me", "iskron_realm", "iskron_search"],
       "retry the failed read",
     );
@@ -74,7 +74,7 @@ for (const failure of ["OFFLINE", "readiness refusal", "search refusal"]) {
     assert.equal(text(again), "");
     assert.equal(
       calls.length,
-      before + (failure === "search refusal" ? 1 : 3),
+      before + (failure === "search refusal" ? 2 : 3),
       "one complete return consumes the obligation",
     );
   });

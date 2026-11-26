@@ -3,6 +3,8 @@
 // One slice per account for the whole plugin process (shared/mindcache.ts): every session's
 // bridge here starts from the same environment — grant directory, server, token.
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { envName } from "../delivery/index.ts";
 import type { Bridge } from "../shared/bridge-client.ts";
@@ -12,9 +14,24 @@ import { authDir, textOf } from "./bridge-io.ts";
 /** The platform's answer — no longer than this. */
 const SLICE_MS = 10_000;
 
-/** The credential the plugin's bridges start with names the account. */
+/** A personal access token the bridges start with: the variable, else the file beside the grant. */
+function patOf(): string {
+  const env = process.env[envName("BRIDGE_TOKEN")]?.trim();
+  if (env) return env;
+  try {
+    return readFileSync(join(authDir(), "token"), "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The credential's part of the shared slice's key: server, grant directory, the token's
+ * fingerprint. The account itself — the handle whoami names on each read — completes it
+ * (shared/mindslice.ts): personal rules never cross accounts.
+ */
 function account(): string {
-  const token = process.env[envName("BRIDGE_TOKEN")]?.trim() ?? "";
+  const token = patOf();
   const pat = token ? createHash("sha256").update(token).digest("hex").slice(0, 16) : "";
   return `opencode\n${process.env[envName("BRIDGE_URL")]?.trim() ?? ""}\n${authDir()}\n${pat}`;
 }
