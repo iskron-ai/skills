@@ -3973,7 +3973,7 @@ part("rooms");
 // ── room kinds for watchdogs (#5851): the bridge batches, an interrupt flushes first ──
 
 const sendRoom = (fake, frame) => fake.control({ ws_send: JSON.stringify(frame) });
-export { connected, sendRoom, waitFor };
+export { codexDoor, connected, runClient, sendRoom, waitFor };
 /** Слово мне со стопкой прерывания — адресованное будит; счёт ждавших идёт перед ним (#6574). */
 const nudge = (fake, id = 999) => sendRoom(fake, { ...said("interrupt", id), addressee: ME });
 

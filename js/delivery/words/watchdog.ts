@@ -38,6 +38,7 @@ export interface WatchdogWords {
   doorNotOpened: (why: string) => string;
   noIdFromRing: () => string;
   alreadyPut: (id: string) => string;
+  deferred: (id: string, s: number) => string;
 }
 
 const ruFrames = (n: number): string => {
@@ -87,6 +88,8 @@ export const WATCHDOG: Readonly<Record<Lang, WatchdogWords>> = {
     doorNotOpened: (why) => `дверь не открылась: ${why}`,
     noIdFromRing: () => "кадр без id из кольца — пометить нечем, в тред не кладу повторно",
     alreadyPut: (id) => `кадр ${id} уже вложен — в тред не кладу повторно`,
+    deferred: (id, s) =>
+      `кадр ${id} отложен — не прерываю идущий ход: в тред через ${s}s или со следующим прерывающим кадром`,
   },
   en: {
     doer: (text) => `DOER: ${text}`,
@@ -134,5 +137,7 @@ export const WATCHDOG: Readonly<Record<Lang, WatchdogWords>> = {
     noIdFromRing: () =>
       "a frame without an id from the ring — nothing to mark it with, not putting it into the thread again",
     alreadyPut: (id) => `frame ${id} was already put in — not putting it into the thread again`,
+    deferred: (id, s) =>
+      `frame ${id} deferred — not interrupting the running turn: into the thread in ${s}s or with the next interrupting frame`,
   },
 };
