@@ -26,6 +26,8 @@ const answer = (text, isError = false) => ({ content: [{ type: "text", text }], 
 const request = () => ({ sessionID: "production-read", system: [] });
 const text = (r) => r.system.map((p) => p.text).join("\n");
 const words = (s) => s.split("контекст сжат").length - 1;
+/** A bridge of an older build: no `whoami` of its own — «no such method». */
+const older = () => Object.assign(new Error("no such method"), { code: -32601 });
 // The slice is one per server and account for the plugin's process (shared/mindcache.ts), the
 // account the bridge's own whoami names: each read here is another server's — or the first
 // one's slice would serve the rest under the same @tester.
@@ -39,7 +41,8 @@ for (const failure of ["OFFLINE", "readiness refusal", "search refusal"]) {
     let refused = false;
     const calls = [];
     const bridge = {
-      async request(_method, p) {
+      async request(method, p) {
+        if (method !== "tools/call") throw older(); // whoami by its own call, as an older bridge
         calls.push(p.name);
         if (!refused && (failure !== "search refusal" || p.name === "iskron_search")) {
           refused = true;
@@ -65,7 +68,9 @@ for (const failure of ["OFFLINE", "readiness refusal", "search refusal"]) {
     assert.deepEqual(
       calls.slice(before),
       failure === "search refusal"
-        ? ["iskron_search"] // the account and its mind remembered: only the failed search again
+        ? // the account asked anew (every read asks whoami — an older bridge by its own call),
+          // its mind remembered: then only the failed search again
+          ["iskron_me", "iskron_search"]
         : ["iskron_me", "iskron_realm", "iskron_search"],
       "retry the failed read",
     );
@@ -76,7 +81,7 @@ for (const failure of ["OFFLINE", "readiness refusal", "search refusal"]) {
     assert.equal(text(again), "");
     assert.equal(
       calls.length,
-      before + (failure === "search refusal" ? 1 : 3),
+      before + (failure === "search refusal" ? 2 : 3),
       "one complete return consumes the obligation",
     );
   });
@@ -88,7 +93,8 @@ test("production slice keeps a confirmed absent mind and an empty slice valid in
     const calls = [];
     const result = await sliceBy(
       {
-        async request(_method, p) {
+        async request(method, p) {
+          if (method !== "tools/call") throw older();
           calls.push(p.name);
           return answer(
             p.name === "iskron_me"
@@ -110,8 +116,9 @@ test("ordinary production slice reads retain soft diagnostics for transport and 
   for (const failure of ["OFFLINE", "REFUSED"]) {
     fresh();
     const result = await sliceBy({
-      async request() {
+      async request(method) {
         if (failure === "OFFLINE") throw new Error(failure);
+        if (method !== "tools/call") throw older();
         return answer(failure, true);
       },
     });
@@ -126,3 +133,55 @@ test("unknown readiness is not a successful strict slice but stays diagnostic fo
   fresh();
   assert.equal(await sliceBy(bridge), MIND_SLICE.ru.unread("account handle unknown"));
 });
+
+// The reviewer's scene (№5817 [573]; REALITY.md, the mind cache's row): ONE bridge, a new login
+// in its store switches the account it speaks for (OAuth: the bridge reads its token on every
+// request). The next read asks whoami of that bridge again and gets Bob's rules (or «still being
+// read») — never Alice's text in Bob's session, never a read without whoami after the switch,
+// never @alice/mind read by Bob's bridge. Both bridges: one answering its own `whoami`, and an
+// older one that knows no such method — its whoami is a call of its own.
+for (const own of [true, false])
+  test(`one bridge whose account a new login switches: the next read asks whoami and reads Bob's rules (${own ? "the bridge's own whoami" : "an older bridge"})`, async () => {
+    fresh();
+    let subject = "alice";
+    const asked = [];
+    const bridge = {
+      async request(method, p) {
+        if (method === "iskron/whoami") {
+          if (!own) throw older();
+          asked.push({ whoami: subject });
+          return { handle: subject };
+        }
+        const a = p.arguments ?? {};
+        asked.push({ [p.name]: a.realm ?? a.action ?? "", by: subject });
+        if (p.name === "iskron_me")
+          return answer(`Вызывающая идентичность: @${subject} · handle @${subject}`);
+        if (p.name === "iskron_realm")
+          return answer(
+            `Доступные графы (1) — адресуй их как @owner/slug:\n    @${subject}/mind  r204  mind · 2026-09-23`,
+          );
+        const owner = String(a.realm).split("/")[0].slice(1);
+        return answer(
+          `Найдено 1 узлов:\n  📌 Правило ${owner} (#31, phenomenon, Pt/Va/Ad, v1) — правило ${owner}`,
+        );
+      },
+    };
+    assert.match(await sliceBy(bridge), /Правило alice/);
+    const from = asked.length;
+    subject = "bob"; // a new login in the bridge's store: Bob from now on
+    const second = await sliceBy(bridge);
+    const after = asked.slice(from);
+    assert.ok(
+      after.some((c) => c.whoami === "bob" || c.iskron_me === "whoami"),
+      `the read after the switch asks whoami: ${JSON.stringify(after)}`,
+    );
+    assert.doesNotMatch(second, /Правило alice/, "never Alice's rules in Bob's session");
+    assert.ok(
+      /Правило bob/.test(second) || second === MIND_SLICE.ru.pending(),
+      `Bob's rules, or that they are still being read: ${second}`,
+    );
+    assert.ok(
+      !after.some((c) => c.iskron_search === "@alice/mind"),
+      `@alice/mind is not read by Bob's bridge: ${JSON.stringify(after)}`,
+    );
+  });

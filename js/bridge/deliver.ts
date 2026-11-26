@@ -45,6 +45,7 @@ import { annotateToolList } from "./moment.ts";
 import { narrowToolList, outsideSetRefusal } from "./narrow.ts";
 import { localHalted } from "./orderhalt.ts";
 import { ownerRefusal } from "./owner.ts";
+import { localWhoami } from "./ownwhoami.ts";
 import { noteLocaleEcho, withPlaceFields } from "./placefields.ts";
 import { isPulseCall, runPulse } from "./pulse.ts";
 import { localRealm } from "./realmask.ts";
@@ -151,6 +152,7 @@ const LOCAL = [
   localHalted,
   localRealm,
   localStopSeat,
+  localWhoami,
 ];
 async function deliverOne(msg: JsonRpcMessage): Promise<void> {
   if (refuseLaunch(msg)) return;
