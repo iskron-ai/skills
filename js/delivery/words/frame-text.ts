@@ -19,6 +19,27 @@ export interface ClockNoticeFacts {
   escalated: boolean | null;
 }
 
+export interface OpenCardFacts {
+  room: number;
+  entry: number;
+  key: string;
+  standing: string | null;
+  karta: number | null;
+  askedAt: string;
+}
+
+function openCard(lang: Lang, c: OpenCardFacts): string {
+  const ru = lang === "ru";
+  const role = c.karta === null ? null : `${ru ? "роль" : "role"} ${c.karta}`;
+  const who =
+    c.standing && role
+      ? `${c.standing} (${role})`
+      : (c.standing ?? role ?? (ru ? "неизвестно кто" : "unknown"));
+  return ru
+    ? `  №${c.room} [${c.entry}], ключ ${c.key}: спросил ${who}, с ${c.askedAt}`
+    : `  №${c.room} [${c.entry}], key ${c.key}: asked by ${who}, since ${c.askedAt}`;
+}
+
 function clockNotice(
   lang: Lang,
   kind: "card_unanswered" | "line_due",
@@ -49,6 +70,10 @@ export interface FrameTextWords {
   clockNotice: (kind: "card_unanswered" | "line_due", facts: ClockNoticeFacts) => string;
   cardRepeat: (n: number | null) => string;
   openCards: (count: number | null, oldest: string | null, malformed?: boolean) => string;
+  /** Строка одной карточки снимка — под строкой счёта; время — как прислал сервер. */
+  openCard: (card: OpenCardFacts) => string;
+  /** Сколько карточек снимка не показано: неверная форма. */
+  cardsMalformed: (n: number) => string;
   /**
    * Куда вести за не вошедшим и пропавшим: дела места — журнала канала у сервера нет
    * (граф @nks/nks-dev, узел #7636).
@@ -100,6 +125,8 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
     cardRepeat: (n) => `повтор карточки: ${n ?? "номер неизвестен"}`,
     openCards: (count, oldest, malformed = false) =>
       `карточек без ответа: ${count ?? "неизвестно"}${oldest ? `; старшая с ${oldest}` : ""}${malformed ? " (неверное my_open_cards)" : ""}`,
+    openCard: (c) => openCard("ru", c),
+    cardsMalformed: (n) => `  карточек неверной формы не показано: ${n} (my_open_cards.items)`,
     myCases: () => `${tool("case")}(action="mine"), затем read каждого`,
     frame: (id) => `кадр ${id}`,
     yoursBelow: () => ` — адресованные строками ниже; `,
@@ -130,6 +157,8 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
     cardRepeat: (n) => `card repeat: ${n ?? "number unknown"}`,
     openCards: (count, oldest, malformed = false) =>
       `unanswered cards: ${count ?? "unknown"}${oldest ? `; oldest since ${oldest}` : ""}${malformed ? " (invalid my_open_cards)" : ""}`,
+    openCard: (c) => openCard("en", c),
+    cardsMalformed: (n) => `  malformed cards not shown: ${n} (my_open_cards.items)`,
     myCases: () => `${tool("case")}(action="mine"), then read each`,
     frame: (id) => `frame ${id}`,
     yoursBelow: () => ` — yours in the lines below; `,
