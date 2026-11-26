@@ -69,13 +69,15 @@ export const state = scoped(() => ({
 /**
  * A knock of this session's return through the machine's gate (returngate.ts, #11375). A
  * session that already came back through it does not wait again (#11413): its re-registration
- * or board read goes as the return's tail. `opens` — the knock opens a new session (an
- * initialize): never a tail. The session the knock leaves is marked as come back.
+ * or board read goes as the return's tail — still behind a probe out for the server. `opens` —
+ * the knock opens a new session (an initialize): never a tail. The session the knock leaves is
+ * marked as come back; the mark goes with the session — its next 404 or reopen drops it.
  */
 export async function throughReturn<T>(knock: () => Promise<T>, opens = false): Promise<T> {
   const back = !opens && !!state.sessionId && state.returned === state.sessionId;
   const got = await throughGate(CFG.serverUrl, knock, back ? "tail" : "return");
-  state.returned = state.sessionId;
+  // A session a sibling's 404 already lost meanwhile earns no mark.
+  state.returned = state.sessionId === state.goneSession ? null : state.sessionId;
   return got;
 }
 
@@ -87,6 +89,7 @@ export function letGo(why: string): Promise<void> {
   const id = state.sessionId;
   state.sessionId = null;
   state.sessionToken = null;
+  state.returned = null; // the mark belongs to the return that earned it (#11413)
   if (!id || id === state.goneSession) return Promise.resolve();
   return closeSession({ id, token: bearer(), protocolVersion: state.protocolVersion }, why);
 }
@@ -289,6 +292,8 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
   if (res.status === 404 && sentSession) {
     res.body?.cancel?.();
     state.goneSession = sentSession;
+    // Lost again: its next knock is a return through the gate, not the last return's tail (#11413).
+    if (state.returned === sentSession) state.returned = null;
     throw new UpstreamError("session expired upstream", "session", null, UpstreamError.NOT_SENT);
   }
   const sid = res.headers.get("mcp-session-id");

@@ -6,12 +6,12 @@ import { BRIDGE_NAME, RETURN_GATE } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { BUILD } from "./build.ts";
 import { type Outcome, UpstreamError } from "./errors.ts";
-import { type ReturnLater } from "./returngate.ts";
+import { type ReturnLater } from "./gatestay.ts";
 import { log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /**
- * A call whose place at the return gate is further than ~20 s away (returngate.ts notPast,
+ * A call whose time at the return gate would pass ~20 s (gatestay.ts notPast,
  * #11375): not sent, answered at once with its remaining wait; the seat's return goes on.
  */
 export function returnLater(

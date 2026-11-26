@@ -13,13 +13,13 @@
 // orchestrator's own session) goes through the same gate as "open": at once without
 // contention, at most two in flight with everything else. A seat passes the gate once per
 // return (#11413): a session that already came back through it goes on as its return's tail
-// (its re-registration, a board read) — a slot of the two, no probe, no second draw. A call
-// whose place is further than ~20 s away is not held (notPast): it answers at once, and the
-// return goes on in its place. A bridge outside a daemon is a machine of its own: its gate
-// holds only itself (README).
+// (its re-registration, a board read) — a slot of the two, no second draw, and never past a
+// probe out for the server. Every wait here is the session's stay (gatestay.ts): a call whose
+// time at the gate would pass ~20 s is not held — it answers at once, and the return goes on in
+// its place. A bridge outside a daemon is a machine of its own: its gate holds only itself (README).
 import { envName } from "../delivery/index.ts";
-import { scoped } from "../shared/scope.ts";
 import { DownError } from "./errors.ts";
+import { stayAt } from "./gatestay.ts";
 import { sleep } from "./store.ts";
 import { log } from "./streams.ts";
 
@@ -30,8 +30,6 @@ const envMs = (name: string, dflt: number): number => {
 /** The window's growth per waiting session and its cap; the variables are for probes. */
 const STEP_MS = envMs("BRIDGE_RETURN_STEP_MS", 1000);
 const CAP_MS = envMs("BRIDGE_RETURN_CAP_MS", 60_000);
-/** The longest a call is held at the gate: a place further away answers at once (#11375). */
-const LIMIT_MS = envMs("BRIDGE_RETURN_LIMIT_MS", 20_000);
 const AT_ONCE = 2;
 /** The random draw in [0, 1); a probe may fix it (the BRIDGE_RETURN_DRAW variable) to see it drawn. */
 const FIXED = ((v: string | undefined): number | null =>
@@ -52,36 +50,16 @@ interface Gate {
   turns: (() => void)[];
 }
 
-/** This session's place at the gate: when its drawn delay ends (0 — none drawn), and who asks. */
-const place = scoped(() => ({ at: 0, asking: new Set<() => void>() }));
+/** The delay a return waiting for the probe will draw, on average: its best estimate (gatestay.ts). */
+const drawnLater = (g: Gate): number => Math.min(CAP_MS, STEP_MS * g.waiting) * (FIXED ?? 0.5);
 
-/** A call not held at the gate: its place is `waitMs` away; the return goes on without it. */
-export class ReturnLater extends Error {
-  waitMs: number;
-  constructor(waitMs: number) {
-    super(`the seat is returning — not sent, its place at the gate is ${waitMs} ms away`);
-    this.waitMs = waitMs;
+/** The probe's outcome: a DownError — the server is down, no knock goes; anything else — go on. */
+async function probeOutcome(g: Gate): Promise<void> {
+  for (let p = g.probe; p; p = g.probe) {
+    const down = await p;
+    // The server is down: the window stands — no knock; the call answers «not sent».
+    if (down instanceof DownError) throw down;
   }
-}
-
-/**
- * `work` (this session's return) awaited by a call — until this session's drawn place at the
- * gate is further than LIMIT_MS away: then the call rejects at once with ReturnLater, and the
- * work goes on in its place in the queue; the next call finds it returned or nearer.
- */
-export function notPast<T>(work: Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const me = place;
-    const ask = (): void => {
-      const left = me.at - Date.now();
-      if (!me.at || left <= LIMIT_MS) return;
-      me.asking.delete(ask);
-      reject(new ReturnLater(left));
-    };
-    me.asking.add(ask);
-    ask();
-    void work.then(resolve, reject).finally(() => me.asking.delete(ask));
-  });
 }
 
 const gates = new Map<string, Gate>();
@@ -95,6 +73,16 @@ const gateOf = (server: string): Gate => {
 async function turn(g: Gate): Promise<void> {
   if (g.out < AT_ONCE && !g.turns.length) return void g.out++;
   await new Promise<void>((r) => g.turns.push(r));
+}
+
+/** A slot as this session's stay at the gate: its wait is the knocks ahead, not estimated. */
+async function slot(g: Gate): Promise<void> {
+  const end = stayAt(() => 0);
+  try {
+    await turn(g);
+  } finally {
+    end();
+  }
 }
 
 function done(g: Gate): void {
@@ -129,7 +117,14 @@ export async function throughGate<T>(
 ): Promise<T> {
   const g = gateOf(server);
   if (kind === "tail") {
-    await turn(g);
+    // Not past the one probe (#11413): a probe out for the server holds the tail too.
+    const end = stayAt(() => 0);
+    try {
+      await probeOutcome(g);
+      await turn(g);
+    } finally {
+      end();
+    }
     return knocked(g, knock);
   }
   if (kind === "open" && !g.probe && g.waiting === 0 && g.out < AT_ONCE) {
@@ -139,7 +134,7 @@ export async function throughGate<T>(
   if (kind === "return" && !g.probe && g.returns === 0) {
     log("return gate: this session is the machine's probe");
     g.returns++;
-    const run = turn(g).then(() => knocked(g, knock));
+    const run = slot(g).then(() => knocked(g, knock));
     g.probe = run.then(
       () => null,
       (e: unknown) => (e instanceof DownError ? e : null),
@@ -157,10 +152,11 @@ export async function throughGate<T>(
   try {
     g.waiting++;
     try {
-      for (let p = g.probe; p; p = g.probe) {
-        const down = await p;
-        // The server is down: the window stands — no knock; the call answers «not sent».
-        if (down instanceof DownError) throw down;
+      const forProbe = stayAt(() => (kind === "return" ? drawnLater(g) : 0));
+      try {
+        await probeOutcome(g);
+      } finally {
+        forProbe();
       }
       // Every return after the probe's outcome spreads over the window (#11375): two returns at
       // once are not two knocks in the same second. An open spreads only in a crowd: a few
@@ -171,19 +167,18 @@ export async function throughGate<T>(
         log(
           `return gate: ${g.waiting} waiting — this one goes in ${wait} ms (window ${window} ms)`,
         );
-        const me = place;
-        me.at = Date.now() + wait;
-        for (const ask of [...me.asking]) ask(); // a call this far away is not held (notPast)
+        const until = Date.now() + wait;
+        const delayed = stayAt(() => until - Date.now()); // a call this far away is not held
         try {
           await sleep(wait);
         } finally {
-          me.at = 0;
+          delayed();
         }
       }
-      const slot = Date.now();
-      await turn(g);
+      const from = Date.now();
+      await slot(g);
       const now = Date.now();
-      log(`return gate: admitted after ${now - came} ms (waited for slot ${now - slot} ms)`);
+      log(`return gate: admitted after ${now - came} ms (waited for slot ${now - from} ms)`);
     } finally {
       g.waiting--;
     }

@@ -37,6 +37,7 @@ import {
 } from "./errors.ts";
 import { evictedRefusal } from "./evicted.ts";
 import { forHarness, structuredOf } from "./fields.ts";
+import { notPast, ReturnLater } from "./gatestay.ts";
 import { liveHearing, rawSeatRefusal, seatRealm } from "./hearing.ts";
 import { initializeSession } from "./initialize.ts";
 import { localLeave } from "./leave.ts";
@@ -50,7 +51,7 @@ import { localRealm } from "./realmask.ts";
 import { isRead } from "./repeat.ts";
 import { noteReply } from "./replynotes.ts";
 import { isCheckCall, isResumeCall } from "./resume.ts";
-import { notPast, ReturnLater, throughGate } from "./returngate.ts";
+import { throughGate } from "./returngate.ts";
 import { localEnd } from "./runend.ts";
 import { satelliteChannelRefusal } from "./satellite.ts";
 import { withCallOrigin } from "./seatorigin.ts";
