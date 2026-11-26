@@ -10,6 +10,7 @@ import { type Answer, callTool } from "./call.ts";
 import { claimResult } from "./claimdelivery.ts";
 import { CFG } from "./config.ts";
 import { endedSince } from "./endedseats.ts";
+import { H } from "./holdstate.ts";
 import { placeFields } from "./placefields.ts";
 import { type MoveSeat, type RegisterMove, seatIdOf } from "./ratelimit.ts";
 import { racedOpening, refusalOf } from "./refusal.ts";
@@ -38,10 +39,24 @@ export const gateShut = (move: RegisterMove, seat: MoveSeat): string | null =>
 /**
  * A re-registration (a rebind after a lost session, a return from disk after a reload or a
  * handover, a skills refresh after a self-update) goes through the machine's return gate
- * (returngate.ts, #11375): one probe, the rest spread after it. A first stand does not.
+ * (returngate.ts, #11375): one probe, the rest spread after it. A first stand does not. The
+ * gate is asked once more right before the request leaves — a wait at the return gate may last a
+ * minute: stopped, the seat ended, or left by word meanwhile — nothing is sent (#7439), `dropped`.
  */
-const returning = <R>(move: RegisterMove, send: () => Promise<R>): Promise<R> =>
-  move.regate ? throughGate(CFG.serverUrl, send) : send();
+async function returning<R>(
+  move: RegisterMove,
+  seat: MoveSeat,
+  send: () => Promise<R>,
+  dropped: (why: string) => R,
+): Promise<R> {
+  const go = (): Promise<R> => {
+    const shut = gateShut(move, seat) ?? (H.parked ? "the seat was left meanwhile" : null);
+    if (!shut) return send();
+    log(`register not sent: ${shut}`);
+    return Promise.resolve(dropped(shut));
+  };
+  return move.regate ? throughGate(CFG.serverUrl, go) : go();
+}
 
 /**
  * A seat-open race (409 without a rule, refusal.ts) is registered once more — a claim
@@ -80,7 +95,8 @@ export async function registerByCall(
   const send = () => callTool(tool("channel"), { ...args, action: "register" });
   const claim = !!(args.spawned_for || launchBasis(args)); // callTool adds the same basis
   const raced = (a: Answer): boolean => a.isError && racedOpening(a.refusal);
-  return onceMoreIfRaced(await returning(move, send), raced, claim, move, seat, send);
+  const first = await returning(move, seat, send, (text): Answer => ({ isError: true, text }));
+  return onceMoreIfRaced(first, raced, claim, move, seat, send);
 }
 
 /**
@@ -96,7 +112,7 @@ export async function registerRaw(
 ): Promise<JsonRpcMessage | null> {
   if (gateShut(move, seat) || claimRefusal()) return null;
   const send = () => postRegister(place, freshSkills);
-  const first = await returning(move, send);
+  const first = await returning(move, seat, send, () => null);
   const claim = !!registeredBasis(place ?? {}).spawned_for; // remembered by the send itself
   const raced = (m: JsonRpcMessage | null): boolean =>
     !!m?.result?.isError && racedOpening(refusalOf(m));
