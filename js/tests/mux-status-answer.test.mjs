@@ -85,15 +85,22 @@ test("ref_invalid: NOT set, and a journal line names a bridge defect", async () 
   });
 });
 
+// A busy line does no connect and no register (#4235): the same address in the hold record —
+// NOT set, stand again; no register, no second frame.
 for (const reason of ["no_live_standing", "unknown_standing"]) {
-  test(`${reason}: the seat is registered once more and the line sent again`, async () => {
+  test(`${reason}: no register, no second send — the line NOT set, stand again`, async () => {
     await withMux(async (ctx) => {
       const { a } = await seated(ctx, `retry-${reason}`);
       ctx.mux.statusReasons.push(reason);
       const before = ctx.fake.state.counts.register_standing;
-      said(await a.stand({ realm: REALM, status: "retry me" }));
-      assert.equal(ctx.fake.state.counts.register_standing - before, 1, "one register");
-      assert.equal(ctx.mux.sent("status").filter((f) => f.text === "retry me").length, 2);
+      const r = await a.stand({ realm: REALM, status: "retry me" });
+      assert.ok(r.result?.isError, textOf(r));
+      assert.match(
+        textOf(r),
+        /места на канале нет — встань снова|no live seat on the channel — stand again/,
+      );
+      assert.equal(ctx.fake.state.counts.register_standing - before, 0, "no register");
+      assert.equal(ctx.mux.sent("status").filter((f) => f.text === "retry me").length, 1);
     });
   });
 }

@@ -12,7 +12,7 @@ import { words } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { socketPathOf, standingsDirOf } from "../shared/standings.ts";
 import { nameOf } from "./board.ts";
-import { resolveAgainstLed, short } from "./call.ts";
+import { resolveAgainstLed } from "./call.ts";
 import { CFG } from "./config.ts";
 import {
   hasStatusAddressFor,
@@ -28,9 +28,7 @@ import { unheardListenBlock } from "./listen.ts";
 import { EVERY } from "./muxhold.ts";
 import { normKarta, normName } from "./names.ts";
 import { extraIn } from "./places.ts";
-import { registerMove } from "./ratelimit.ts";
 import { sameRealm } from "./realms.ts";
-import { replayRegister, replyText } from "./standing.ts";
 import { statusAddress } from "./statusaddr.ts";
 import {
   NO_LIVE_STANDING,
@@ -219,10 +217,9 @@ export async function publishStatus(
   // Return restores what the session asked for, even when delivery is uncertain or refused.
   if (addr.key === statusAddress()?.key) S.lastPublished = text;
   let st = await publishStatusTo(addr.url, text, 5000, everyPlace ? EVERY : addr.standingId);
-  // The channel is alive but carries no live seat (graph @nks/nks-dev, node #11372): a line is
-  // sent once more to the seat resolved again; a clear raises no seat and is not.
-  if (st.rule === NO_LIVE_STANDING && text !== "")
-    st = await liveAgain(addr, text, realm, everyPlace);
+  // The channel is alive but carries no live seat (graph @nks/nks-dev, nodes #4235, #11376): the
+  // hold record's other address gets the line once, else NOT set — no register; a clear never.
+  if (st.rule === NO_LIVE_STANDING && text !== "") st = await liveAgain(addr, text, everyPlace);
   // The hold record keeps the latest asked line whatever its outcome — as it landed, when the
   // server said so (a trimmed one comes back trimmed, #6729); only a clear empties it.
   const kept = st.ok ? (st.doing ?? text) : text;
@@ -236,38 +233,28 @@ export async function publishStatus(
 }
 
 /**
- * The seat's address, resolved once more after 404 no_live_standing (graph @nks/nks-dev, node
- * #11372). The hold record is the shared source: a newer address there gets the line, once. The
- * same address: the seat is registered again — register, never connect (registergate.ts) — and
- * the line goes once more to the address the answer leaves. Refused again — the line was NOT
- * set, and the outcome carries no code: nothing reads it as a turned address.
+ * The channel lives but carries no live seat (no_live_standing or unknown_standing — the POST's
+ * 404 rule or the status frame's reason). A busy line does no connect and no register (graph
+ * @nks/nks-dev, node #4235, the owner's decision; the frame — #11376): the bridge reads its hold
+ * record again — a different seat address there gets the line, once; otherwise the line is NOT
+ * set and the agent is told to stand again. The outcome carries no code: nothing reads it as a
+ * turned address.
  */
 async function liveAgain(
   addr: NonNullable<ReturnType<typeof statusAddress>>,
   text: string,
-  realm: string | undefined,
   everyPlace: boolean,
 ): Promise<StatusOutcome> {
   const w = words(STATUS_POST);
-  const again = async (url: string): Promise<StatusOutcome> => {
-    const scope = everyPlace ? EVERY : (statusAddress(realm)?.standingId ?? addr.standingId);
-    const st = await publishStatusTo(url, text, 5000, scope);
-    return st.ok ? st : { ok: false, body: w.notSet(st.body) };
-  };
   const held = readHoldRecord(addr.key)?.statusUrl ?? null;
-  if (held && held !== addr.url) {
-    log("busy line: the channel has no live seat — sent once to the address the hold record names");
-    return again(held);
+  if (!held || held === addr.url) {
+    log("busy line: the channel has no live seat — not set; the agent is told to stand again");
+    return { ok: false, body: w.noLiveSeat() };
   }
-  log(
-    "busy line: the channel has no live seat — the seat is registered again, the line sent once more",
-  );
-  // The seat the address belongs to: a seat beside of this graph, else the main one.
-  const place = (realm ? extraIn(realm)?.standing : undefined) ?? state.standing;
-  const got = await replayRegister(place ?? null, false, registerMove("once"));
-  if (!got || got.error || got.result?.isError)
-    return { ok: false, body: w.notSet(got ? short(replyText(got)) : "") };
-  return again(statusAddress(realm)?.url ?? addr.url);
+  log("busy line: the channel has no live seat — sent once to the address the hold record names");
+  const st = await publishStatusTo(held, text, 5000, everyPlace ? EVERY : addr.standingId);
+  if (st.ok) return st;
+  return { ok: false, body: st.rule === NO_LIVE_STANDING ? w.noLiveSeat() : w.notSet(st.body) };
 }
 
 /** The whole path of moving the hearing (graph @nks/nks-dev, node #5395). */

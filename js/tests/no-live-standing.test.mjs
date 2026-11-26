@@ -1,11 +1,9 @@
-// The status POST's 404 carrying the rule `no_live_standing` (graph @nks/nks-dev, node
-// #11372): the channel is alive but carries no live seat. It used to be read as a turned
-// address («this seat address no longer addresses»). Now a busy LINE resolves the seat once
-// more: the hold record on disk names a newer address — the line goes there once; the same
-// address — the seat is registered again (register, never connect) and the line is sent once
-// more; refused again — the reply says the line was NOT set. A 404 WITHOUT the rule keeps
-// today's word. ISKRON_BRIDGE_PATH points the bridge at a past build to see the first three
-// fail on the defect; the last one is a guard and is green on both.
+// The status POST's 404 carrying the rule `no_live_standing` (graph @nks/nks-dev, nodes #4235,
+// #11376): the channel is alive but carries no live seat. A busy line does no connect and no
+// register — the owner's decision on #4235: the bridge reads its hold record again; a different
+// seat address there gets the line once; the same address — the line is NOT set, and the agent
+// is told to stand again. A 404 WITHOUT the rule keeps today's word (a turned address).
+// ISKRON_BRIDGE_PATH points the bridge at a past build: there the same address registered again.
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -29,8 +27,8 @@ const SEAT = { realm: "nks-dev", karta: 931, name: "live-again" };
 const ENV = { ISKRON_BRIDGE_TOKEN: PAT, ISKRON_BRIDGE_NO_UPDATE: "1" };
 const REFUSED_404 = /Отказано \(404\)|Refused \(404\)/;
 const TURNED = /больше не адресует|no longer addresses/;
-const NOT_SET = /НЕ поставлена|was NOT set/;
-const ACCEPTED = /^занятость |^busyness /i;
+const NO_LIVE_SEAT =
+  /строка занятости НЕ поставлена: места на канале нет — встань снова \(iskron_stand\)|busy line NOT set: no live seat on the channel — stand again \(iskron_stand\)/;
 const textOf = (reply) => (reply.result?.content ?? []).map((c) => c.text ?? "").join("\n");
 
 function startBridge(serverUrl, authDir) {
@@ -102,22 +100,28 @@ const holdFile = (dir) => {
   return found ? join(dir, String(found)) : null;
 };
 
-test("404 no_live_standing on the seat's own address: the seat is registered again and the line lands — no word of a turned address", async (t) => {
+test("404 no_live_standing on the seat's own address: no register, no second send — the line NOT set, stand again", async (t) => {
   await seated(t, async ({ fake, stand, counts }) => {
     const before = counts();
     await fake.control({ noLiveStanding: 1 });
-    const said = await stand({ realm: SEAT.realm, status: "после перерегистрации" }, 3);
+    const said = await stand({ realm: SEAT.realm, status: "без места" }, 3);
     const text = textOf(said);
-    assert.ok(!said.result?.isError, `the line landed: ${text}`);
-    assert.match(text, ACCEPTED, text);
-    assert.doesNotMatch(text, REFUSED_404, `the 404 is not passed off as a refusal: ${text}`);
-    assert.equal(fake.state.status, "после перерегистрации", "the line is on the seat");
-    assert.equal(
-      counts().registers - before.registers,
-      1,
-      "one register — register, never connect",
-    );
-    assert.equal(counts().posts - before.posts, 2, "the refused POST and its one resend");
+    assert.ok(said.result?.isError, `the line did not land, and the reply says so: ${text}`);
+    assert.match(text, NO_LIVE_SEAT, text);
+    assert.doesNotMatch(text, TURNED, text);
+    assert.notEqual(fake.state.status, "без места", "nothing landed");
+    assert.equal(counts().registers, before.registers, "no register for a busy line (#4235)");
+    assert.equal(counts().posts - before.posts, 1, "the refused POST only, no second send");
+  });
+});
+
+test("an empty line on no_live_standing is never re-resolved: one POST, no register", async (t) => {
+  await seated(t, async ({ fake, stand, counts }) => {
+    const before = counts();
+    await fake.control({ noLiveStanding: 1 });
+    await stand({ realm: SEAT.realm, status: "" }, 3);
+    assert.equal(counts().registers, before.registers, "no register");
+    assert.equal(counts().posts - before.posts, 1, "no second send of a clear");
   });
 });
 
@@ -147,18 +151,19 @@ test("404 no_live_standing while the hold record names a newer address: the line
   });
 });
 
-test("404 no_live_standing again after the register: the reply says the line was NOT set — registered once, no word of a turned address", async (t) => {
-  await seated(t, async ({ fake, stand, counts }) => {
+test("404 no_live_standing at the hold record's address too: NOT set, stand again — two sends, no register, no loop", async (t) => {
+  await seated(t, async ({ fake, stand, counts, holdFile }) => {
+    const rec = JSON.parse(readFileSync(holdFile, "utf8"));
+    const base = rec.statusUrl.replace(/\/channel\/status\/[^/]+$/, "");
+    writeFileSync(holdFile, JSON.stringify({ ...rec, statusUrl: `${base}/channel/status/other` }));
     const before = counts();
     await fake.control({ noLiveStanding: 5 });
     const said = await stand({ realm: SEAT.realm, status: "не поставлена" }, 3);
     const text = textOf(said);
-    assert.ok(said.result?.isError, `the line did not land, and the reply says so: ${text}`);
-    assert.match(text, NOT_SET, text);
-    assert.doesNotMatch(text, TURNED, text);
-    assert.notEqual(fake.state.status, "не поставлена", "nothing landed");
-    assert.equal(counts().registers - before.registers, 1, "one register, not a loop");
-    assert.equal(counts().posts - before.posts, 2, "the line is sent twice, not more");
+    assert.ok(said.result?.isError, text);
+    assert.match(text, NO_LIVE_SEAT, text);
+    assert.equal(counts().registers, before.registers, "no register");
+    assert.equal(counts().posts - before.posts, 2, "the refused POST and its one resend there");
   });
 });
 

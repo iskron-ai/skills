@@ -1,6 +1,7 @@
 // Слова POST занятости: нудж обрезки (граф @nks/nks-dev, узлы #6729, #6730) и
 // отказы статусного адреса.
 import type { Lang } from "../lang.ts";
+import { tool } from "../protocol.ts";
 
 export interface StatusPostWords {
   /** Слово сервера об обрезке. */
@@ -11,8 +12,10 @@ export interface StatusPostWords {
   gone: (body: string) => string;
   /** 404 no_live_standing: канал жив, живого места на нём нет — адрес не повернут. */
   noLiveStanding: (body: string) => string;
-  /** Строка НЕ поставлена: повтор тоже отказан; why — последнее слово поверхности или register. */
+  /** Строка НЕ поставлена: повтор тоже отказан; why — последнее слово поверхности. */
   notSet: (why: string) => string;
+  /** Канал жив, живого места на нём нет, другого адреса запись держания не называет (#4235). */
+  noLiveSeat: () => string;
   refused: (status: number, body: string) => string;
   /** The channel goes through the dispatcher and no subscription carries it now. */
   notSubscribed: () => string;
@@ -44,6 +47,8 @@ export const STATUS_POST: Readonly<Record<Lang, StatusPostWords>> = {
       `Отказано (404) поверхностью: ${body || "без тела"} — канал жив, но живого места на нём нет`,
     notSet: (why) =>
       `Отказано (мост): строка занятости НЕ поставлена${why ? ` — ${why}` : ""}; перезайми место явным stand и скажи строку снова`,
+    noLiveSeat: () =>
+      `строка занятости НЕ поставлена: места на канале нет — встань снова (${tool("stand")})`,
     refused: (status, body) => `Отказано (${status}) поверхностью: ${body || "без тела"}`,
     notSubscribed: () =>
       "Отказано (мост): канал идёт через диспетчер, а подписки на него сейчас нет — строка не ушла; старый адрес статуса мост зовёт только при откате на сокет",
@@ -74,6 +79,8 @@ export const STATUS_POST: Readonly<Record<Lang, StatusPostWords>> = {
       `Refused (404) by the surface: ${body || "no body"} — the channel is alive but carries no live seat`,
     notSet: (why) =>
       `Refused (bridge): the busy line was NOT set${why ? ` — ${why}` : ""}; take the seat again with an explicit stand and say the line once more`,
+    noLiveSeat: () =>
+      `busy line NOT set: no live seat on the channel — stand again (${tool("stand")})`,
     refused: (status, body) => `Refused (${status}) by the surface: ${body || "no body"}`,
     notSubscribed: () =>
       "Refused (bridge): the channel goes through the dispatcher and no subscription carries it now — the line did not go; the old status address is called only after falling back to a socket",
