@@ -18,9 +18,9 @@ import { inTurn, inTurnWithin } from "./statusturn.ts";
 import { log } from "./streams.ts";
 
 /**
- * The 404 rule of a channel that is alive but carries no live seat (graph @nks/nks-dev, node
- * #11372): the address was not turned. The only new meaning of a 404 — a 404 without it keeps
- * the meaning of a turned address.
+ * The 404 rule of a channel that is alive but carries no live seat (graph @nks/nks-dev, nodes
+ * #4235, #11376): the address was not turned. The only new meaning of a 404 — a 404 without it
+ * keeps the meaning of a turned address.
  */
 export const NO_LIVE_STANDING = "no_live_standing";
 
@@ -107,7 +107,7 @@ export function trimNudge(t: StatusTrim): string {
   return t.message ? w.trimmedBy(t.message) : w.trimmed();
 }
 
-/** No live seat on the channel, by either reason the dispatcher names: re-resolved once (#11372). */
+/** No live seat on the channel, by either reason the dispatcher names: the hold record read again, no register (#4235, #11376). */
 const NO_SEAT = new Set(["unknown_standing", "no_live_standing"]);
 
 // The dispatcher's answer to a status frame (muxstatus.ts, #11376): set, set trimmed, NOT set
@@ -187,7 +187,7 @@ async function postStatus(
   }
   const body = (await res.text().catch(() => "")).trim();
   if (res.status === 404) {
-    // Only a 404 WITHOUT the rule is a turned address (graph @nks/nks-dev, node #11372).
+    // Only a 404 WITHOUT the rule is a turned address (graph @nks/nks-dev, nodes #4235, #11376).
     if (ruleOf(body) === NO_LIVE_STANDING)
       return { ok: false, rule: NO_LIVE_STANDING, body: words(STATUS_POST).noLiveStanding(body) };
     return { ok: false, code: 404, body: words(STATUS_POST).gone(body) };
