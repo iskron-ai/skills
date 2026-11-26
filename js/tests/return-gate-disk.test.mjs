@@ -57,6 +57,54 @@ test("seats returning from disk after a reload or a self-update: one register fi
 
 // A plugin reload: N new thin bridges at once on one daemon, each with an ordinary initialize (no
 // replay) — never more than two in flight, spread; one lone new session goes at once.
+// The register-by-call path (registergate.ts registerByCall — the disk return's register): each
+// seat's first register meets a seat-open race (409 without a rule) and goes once more. The retry
+// goes through the gate as the first did: first tries and retries together never more than two
+// in flight, however short the window (№5817 [579]).
+test("seats returning from disk, each first register raced (409): the retries go through the gate too — at most two registers in flight", async (t) => {
+  const was = [process.env.ISKRON_BRIDGE_RETURN_STEP_MS, process.env.ISKRON_BRIDGE_RETURN_CAP_MS];
+  // The daemon the first bridge raises takes them: the window as short as it gets.
+  process.env.ISKRON_BRIDGE_RETURN_STEP_MS = process.env.ISKRON_BRIDGE_RETURN_CAP_MS = "1";
+  t.after(() => {
+    for (const [k, v] of [
+      ["ISKRON_BRIDGE_RETURN_STEP_MS", was[0]],
+      ["ISKRON_BRIDGE_RETURN_CAP_MS", was[1]],
+    ])
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+  });
+  await withFake(async ({ fake, bridge }) => {
+    const n = 5;
+    for (let i = 0; i < n; i++) {
+      const a = await bridge();
+      await a.request("iskron/resume", { session: `ses-rr-${i}` });
+      await stood(a, `rrd-${i}`);
+      assert.equal((await a.request("iskron/away")).result?.away, true);
+      a.proc.stdin.end();
+      await a.gone();
+    }
+    const before = fake.state.counts.register_standing;
+    await fake.control({ structured: true, registerConcurrentNext: n, registerToolDelayMs: 200 });
+    fake.state.registerPeak = 0;
+    const back = await Promise.all(
+      Array.from({ length: n }, async (_, i) => {
+        const b = await bridge();
+        return b.request("iskron/resume", {
+          key: `rrd-${i}--931--_nks_nks-dev`,
+          session: `ses-rr-${i}`,
+        });
+      }),
+    );
+    assert.equal(fake.state.counts.register_concurrent, n, "each seat's first try met the race");
+    assert.ok(
+      fake.state.registerPeak <= 2,
+      `at most two registers in flight: ${fake.state.registerPeak}`,
+    );
+    for (const r of back) assert.equal(r.result?.resumed, true, JSON.stringify(r));
+    assert.ok(fake.state.counts.register_standing - before >= n, "every seat registered again");
+  });
+});
+
 test("a plugin reload: N new sessions' initializes never more than two in flight; a lone one goes at once", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     await bridge(); // the daemon is up
