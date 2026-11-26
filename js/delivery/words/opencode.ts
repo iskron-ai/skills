@@ -64,6 +64,8 @@ export interface OpencodeWords {
   sessionClosed: (id: string, frame: string) => string;
   /** The host did not answer whether the session is live: the frame is held, no turn opens. */
   sessionUnknown: (id: string, frame: string) => string;
+  /** The hold of a session not known to be live is full: its oldest frame goes. */
+  holdFull: (id: string, frame: string) => string;
   nowhere: (frame: string, text: string) => string;
   halted: (frame: string, id: string) => string;
   /** The pulse (#7529): the session holds so many frames laid and not taken by its turn yet. */
@@ -152,7 +154,9 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     sessionClosed: (id, frame) =>
       `Искрон: сессия ${id} закрыта или в архиве — ${frame} не доставлен`,
     sessionUnknown: (id, frame) =>
-      `Искрон: сессия ${id} — неизвестно, жива ли: хост не ответил — ${frame} не доставлен, ход не открывается`,
+      `Искрон: сессия ${id} — неизвестно, жива ли: хост не ответил — ${frame} держится в памяти плагина, пока хост не скажет; ход не открывается`,
+    holdFull: (id, frame) =>
+      `Искрон: сессия ${id} — держится слишком много кадров, пока хост молчит о ней; старейший (${frame}) не доставлен`,
     nowhere: (frame, text) =>
       `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; запись дела остаётся в деле (iskron_case history), прямое слово не дошло — ` +
       text,
@@ -249,7 +253,9 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     sessionClosed: (id, frame) =>
       `Iskron: session ${id} is closed or archived — the ${frame} was not delivered`,
     sessionUnknown: (id, frame) =>
-      `Iskron: session ${id} — not known to be live: the host did not answer — the ${frame} was not delivered, no turn opens`,
+      `Iskron: session ${id} — not known to be live: the host did not answer — the ${frame} is held in the plugin's memory until the host tells; no turn opens`,
+    holdFull: (id, frame) =>
+      `Iskron: session ${id} — too many frames held while the host is silent about it; the oldest (${frame}) was not delivered`,
     nowhere: (frame, text) =>
       `Iskron: ${frame} HAS NOWHERE TO GO — the plugin has seen no live root session; a case record stays in the case (iskron_case history), a direct word did not arrive — ` +
       text,

@@ -62,8 +62,8 @@ const names = (rec) => [...rec.tools().keys()].sort();
 const serverTools = (rec) => until(() => names(rec).length === 3, "the server's tools", 8000);
 
 /** A session `s` with a seat (the fake bridge up, its events file named). */
-async function seated(name, ctxOpts) {
-  const b = bridgeEnv(name);
+async function seated(name, ctxOpts, extra = {}) {
+  const b = bridgeEnv(name, extra);
   const rec = await plugin(b.env, ctxOpts);
   try {
     await serverTools(rec);
@@ -139,6 +139,72 @@ test("unknown: a session the host did not answer about gets no turn from anythin
     );
     assert.doesNotMatch(rec.said(), /закрыта или в архиве/, "no answer is not read as an end");
     assert.doesNotMatch(rec.said(), /вложен в сессию/, "nothing was delivered");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The bridge marked the frame seen when it notified (hold.ts): a refusal of an unknown session
+// would lose it. The plugin holds it and asks again — on a backoff and on the session's next event.
+const directAndWake = () =>
+  event("frame", { frame: frame("слово в ход"), raw: "" }) +
+  event("backlog", { pending: 1, frames: [{ id: "w1" }], text: "Побудка: кадров 1\n\nпервое" });
+
+test("unknown, then live: the held words go once each, a direct word steering and a wake-up queueing as they would have", async () => {
+  const faults = { getFails: 1000 };
+  const { rec, events } = await seated(
+    "gate-unknown-live",
+    { sessions: [{ id: "s", time: { updated: 1 } }], faults },
+    { ISKRON_OPENCODE_HOLD_MS: 150 },
+  );
+  try {
+    appendFileSync(events, directAndWake());
+    await until(
+      () => (rec.said().match(/сессия s — неизвестно, жива ли/g) ?? []).length >= 2,
+      "both words held",
+    );
+    await delay(100);
+    assert.equal(rec.prompts.length, 0, "no turn while the host is silent");
+    faults.getFails = 0; // the host answers again: the session is live
+    await until(() => rec.prompts.length === 2, "the held words delivered", 8000);
+    await delay(1500); // every backoff check has passed
+    assert.equal(rec.prompts.length, 2, "each held word exactly once");
+    const [direct, wake] = rec.prompts;
+    assert.equal(direct.sessionID, "s");
+    assert.equal(direct.delivery, "steer");
+    assert.match(direct.text, /слово в ход/);
+    assert.equal(wake.sessionID, "s");
+    assert.equal(wake.delivery, "queue");
+    assert.match(wake.text, /первое/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("unknown, then ended: the held words are never delivered — the session's next event asks the host again", async () => {
+  const faults = { getFails: 1000 };
+  const gone = new Set();
+  const { rec, events } = await seated(
+    "gate-unknown-ended",
+    { sessions: [{ id: "s", time: { updated: 1 } }], faults, gone },
+    { ISKRON_OPENCODE_HOLD_MS: 600_000 }, // no backoff check inside the probe: the event asks
+  );
+  try {
+    appendFileSync(events, directAndWake());
+    await until(
+      () => (rec.said().match(/сессия s — неизвестно, жива ли/g) ?? []).length >= 2,
+      "both words held",
+    );
+    faults.getFails = 0;
+    gone.add("s"); // the host answers now — no such session
+    rec.emit({ type: "session.status", data: { sessionID: "s", status: { type: "idle" } } });
+    await until(
+      () => (rec.said().match(/сессия s закрыта или в архиве/g) ?? []).length >= 2,
+      "the held words dropped",
+    );
+    await delay(500);
+    assert.equal(rec.prompts.length, 0, "an ended agent gets nothing");
+    assert.equal(rec.synthetics.length, 0, "no synthetic either");
   } finally {
     await rec.stop();
   }

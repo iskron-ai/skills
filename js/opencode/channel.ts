@@ -17,7 +17,7 @@ import { separateGraphBatch } from "../shared/softbatch.ts";
 import { authDir } from "./bridge-io.ts";
 import { createCuts } from "./cuts.ts";
 import { processDescendants, processParent, shareLineage } from "./cutwait.ts";
-import { held, live } from "./endgate.ts";
+import { createHolds, live } from "./endgate.ts";
 import { createHalts, descendantsOf } from "./halts.ts";
 import { archiver } from "./host.ts";
 import { channelEnds } from "./leadends.ts";
@@ -97,6 +97,9 @@ export function setupChannel(
     (id, message, kept) => say(W.haltUnlifted(id, message, kept), "warning"),
   );
   const ends = channelEnds(authDir, say);
+  const holds = createHolds(ctx, say, W, (w) =>
+    deliver(w.session, w.text, w.frame, w.delivery, w.child),
+  );
 
   // Every delivery is a log line with the address and the frame, a refusal is loud (#4355).
   async function deliver(
@@ -108,9 +111,9 @@ export function setupChannel(
   ): Promise<{ session: string; inbox: string | null } | null> {
     let id = session;
     if (id && ends.has(id)) return null;
-    // Only a session the host calls live gets a word: ended or unknown, the frame is held, no
-    // turn opens (end gate, endgate.ts).
-    if (await held(ctx, say, W, id, frame, text, child)) return null;
+    // Only a session the host calls live gets a word: ended — dropped, unknown — held until the
+    // host tells; no turn opens meanwhile (end gate, endgate.ts).
+    if (!(await holds.admit({ session: id, text, frame, delivery, child }))) return null;
     id ??= freshestRoot();
     if (id && id !== session && !(await live(ctx, id))) id = null;
     if (!id) {
@@ -324,11 +327,13 @@ export function setupChannel(
 
   return {
     status(session, on) {
+      holds.poke(session);
       if (on) tacts.busy(session);
       else this.taken(session);
     },
     gone(session) {
       ends.end(session);
+      holds.gone(session);
       for (const k of ["child", "root"]) dropPile(`${k}:${session}`);
       tacts.gone(session);
       lives.gone(session);
@@ -370,6 +375,7 @@ export function setupChannel(
     },
     stop() {
       unshare();
+      holds.stop();
       tacts.stop();
       cuts.stop();
       for (const p of piles.values()) {
@@ -391,6 +397,7 @@ export function setupChannel(
     onEvent(session, params: any, child = false) {
       const ev = params?.data as ChannelEvent | undefined;
       if (!ev || typeof ev !== "object") return;
+      holds.poke(session);
       if (session && ends.has(session)) {
         if (ev.kind === "held" && params?.data?.automatic === false) ends.lift(session);
         else {
