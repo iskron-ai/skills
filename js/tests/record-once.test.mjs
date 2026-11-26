@@ -6,6 +6,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { refsOf } from "../bridge/batchlog.ts";
+import { recordKeyOf } from "../shared/seen.ts";
 import { channelOf, muxCarrying, sleep, textOf, waitFor, withMux } from "./mux-kit.mjs";
 import { progress } from "./room-frames.mjs";
 
@@ -80,13 +82,15 @@ test("a stale replay of given records and of an older one wakes nothing", async 
     );
     for (let n = 12; n <= 16; n++) assert.equal(given(s, n), 1, `record ${n} once`);
     assert.equal(given(s, 11), 0, "an older stale count is not news");
-    assert.match(journal() + "", /counts a record (given|older) to the seat/);
+    // The journal names each dropped copy by frame id and record key, with its time (#11359).
+    assert.match(journal(), /dropped as given to \S+: again-12→r-1\/12 /);
+    assert.match(journal(), /dropped as older to \S+: again-11→r-1\/11 /);
   });
 });
 
 // The batch is the server's frames grouped by case, no head of the bridge's own (#11359).
 test("a whole stale batch and a whole wake-up batch carry no head of the bridge's own", async () => {
-  await withMux(async ({ fake, mux, session }) => {
+  await withMux(async ({ fake, mux, session, journal }) => {
     const { s, channel_id } = await seat(fake, mux, session, "no-head");
     const platform = { provenance: { via: "platform" }, type: "message", channel_id };
     mux.push({ ...platform, id: "old-1", body: "ЛЕЖАЛОЕ-ТЕЛО", stale: true });
@@ -102,7 +106,28 @@ test("a whole stale batch and a whole wake-up batch carry no head of the bridge'
         text,
       );
     }
+    // Each batch handed is one journal line with its frame ids, no bodies (#11359).
+    await waitFor("the journal lines", () => /wake-up batch to/.test(journal()), 3000);
+    assert.match(journal(), /stale batch to \S+: 1 frame\(s\): old-1\n/);
+    assert.match(journal(), /wake-up batch to \S+: 1 frame\(s\): wake-1\n/);
+    assert.doesNotMatch(journal(), /ЛЕЖАЛОЕ-ТЕЛО|ПОБУДКА-ТЕЛО/, "no bodies in the journal");
   });
+});
+
+// The record's contract key is (room.id, entry_id); a frame with event_id goes by its event.
+test("the record mark is room.id and entry_id; a frame with event_id writes none", () => {
+  assert.equal(recordKeyOf(record("c", 12, "a")), "rec:r-1|12");
+  assert.equal(recordKeyOf(record("c", 12, "b", { realm: "other" })), "rec:r-1|12");
+  assert.equal(recordKeyOf(record("c", 12, "e", { event_id: 5 })), "");
+  assert.equal(recordKeyOf(record("c", 12, "r", { repeat: true })), "");
+});
+
+test("the journal line names at most 50 ids, the rest by count", () => {
+  const frames = Array.from({ length: 60 }, (_, i) => record("c", i + 1, `f-${i}`));
+  const line = refsOf(frames);
+  assert.match(line, /^f-0→r-1\/1, f-1→r-1\/2, /);
+  assert.match(line, /f-49→r-1\/50 … \+10$/);
+  assert.doesNotMatch(line, /f-50/);
 });
 
 test("a repeated card (repeat: true) still comes, and a text record is not taken for a count", async () => {

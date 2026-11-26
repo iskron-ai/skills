@@ -10,6 +10,7 @@ import { type Frame, isDirectWord } from "../shared/channel.ts";
 import { words } from "../shared/lang.ts";
 import { isLifeCheck, type Marks, splitBatch } from "../shared/seen.ts";
 import { batchBodyText } from "../shared/stalebatch.ts";
+import { logBatch } from "./batchlog.ts";
 import { type ChannelEvent } from "./door.ts";
 
 /** The accumulation window; the variable is a seam for probes, not a human's knob. */
@@ -27,8 +28,11 @@ export class Backlog {
 
   /** The seat's marks: an event already in a turn is not repeated (seen.ts eventIn). */
   private readonly has: Marks;
-  constructor(has: Marks) {
+  /** The seat's key, for the journal line of the batch (batchlog.ts). */
+  private readonly seat: () => string;
+  constructor(has: Marks, seat: () => string = () => "") {
     this.has = has;
+    this.seat = seat;
   }
 
   /** The frames the window holds (pulse.ts pending). */
@@ -89,6 +93,7 @@ export class Backlog {
     const incomplete = count > got.length;
     const head = incomplete ? words(BACKLOG).head(count, expected, got.length, 0) : "";
     const body = { head, shown: got.map((_, i) => i), incomplete };
+    logBatch("wake-up", this.seat(), all);
     emit({
       kind: "backlog",
       frames: got,

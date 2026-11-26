@@ -1,13 +1,13 @@
-// A case record counted once per seat (graph @nks/nks-dev, node #6574): copies of one record
-// come with different frame ids — the role's fan-out, the server's stale replay after a
-// session rebuild — and each used to be counted again, a stale batch waking a turn on
-// counts already given. The record mark (seen.ts recordKeyOf) is the identity; a stale
-// count older than a record of its case already given is not news either.
+// A record is given once per seat by its contract key (room.id, entry_id — seen.ts
+// recordKeyOf); a copy under a new frame id is a re-issued queue row — the server's to fix
+// (graph @nks/nks-dev, nodes #11359, #6574). A frame with event_id goes by its event. A stale
+// count older than the highest record of its case already given is dropped too.
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame, isDirectWord } from "../shared/channel.ts";
 import { isGraphInbox } from "../shared/graph-inbox.ts";
 import { isLifeCheck, noteSeen, recordKeyOf } from "../shared/seen.ts";
 import { markAddressed } from "./addressmark.ts";
+import { frameRef } from "./batchlog.ts";
 import { givenIds } from "./fanout.ts";
 import { log } from "./streams.ts";
 
@@ -50,12 +50,16 @@ export function givenRecord(frame: Frame | null, seen: Set<string>, seenPath: st
  * The frame's addressing marked (addressmark.ts), then a copy not offered (givenRecord): its id
  * is marked given and the drop logged; true — dropped.
  */
-export function countedBefore(frame: Frame | null, seen: Set<string>, seenPath: string): boolean {
+export function countedBefore(
+  frame: Frame | null,
+  d: { seen: Set<string>; seenPath: string; key: string },
+): boolean {
+  const { seen, seenPath } = d;
   if (frame?.type === "message") markAddressed(frame, seenPath, seen);
   const why = givenRecord(frame, seen, seenPath);
-  if (!why) return false;
-  const id = typeof frame?.id === "string" ? frame.id : "";
+  if (!frame || !why) return false;
+  const id = typeof frame.id === "string" ? frame.id : "";
   if (id) noteSeen(seenPath, id, seen);
-  log(`frame ${id || "?"} counts a record ${why} to the seat — not raised`);
+  log(`dropped as ${why} to ${d.key || "?"}: ${frameRef(frame)} — counts a record not raised`);
   return true;
 }
