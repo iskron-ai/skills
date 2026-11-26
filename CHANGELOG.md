@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.16.6](https://github.com/iskron-ai/skills/compare/v8.16.5...v8.16.6) (2026-11-26)
+
+
+### Bug Fixes
+
+* **bridge:** one probe per machine and a spread after the server or a session is lost — the reconnect volley's remainder ([#11337](https://github.com/iskron-ai/skills/issues/11337), [#11375](https://github.com/iskron-ai/skills/issues/11375)) ([#903](https://github.com/iskron-ai/skills/issues/903)) ([bf05d81](https://github.com/iskron-ai/skills/commit/bf05d81593bb042de24d0a10f516e0e471fd75c2))
+
 ## [8.16.5](https://github.com/iskron-ai/skills/compare/v8.16.4...v8.16.5) (2026-11-25)
 
 

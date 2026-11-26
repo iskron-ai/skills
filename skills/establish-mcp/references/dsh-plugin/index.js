@@ -165,12 +165,12 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.16.5";
+var VERSION = "8.16.6";
 
 // js/delivery/words/asks.ts
 var ASK = {
   ru: {
-    ask: (author, to, toPlace, key, done, form, advice) => `${author} спрашивает роль ${to}${toPlace} [${key}]: «${done}»${form}${advice}`,
+    ask: (author, to, toPlace, key, done2, form, advice) => `${author} спрашивает роль ${to}${toPlace} [${key}]: «${done2}»${form}${advice}`,
     place: (place) => `(место ${place})`,
     yesNo: () => "ответ: да или нет (yes | no)",
     free: () => "ответ своим текстом",
@@ -178,12 +178,12 @@ var ASK = {
     advice: (option, why) => `рекомендация: ${option}${why}`,
     answer: (author, refersTo, reply) => `${author} отвечает на [${refersTo}]: ${reply}`,
     ack: (refersTo, reply, author) => `ответ [${refersTo}] принят${reply} · ${author}`,
-    withdrawn: (withdraws, key, done, verdict, author) => `вопрос [${withdraws}] снят: [${key}] [${done}] = ${verdict} · ${author}`,
+    withdrawn: (withdraws, key, done2, verdict, author) => `вопрос [${withdraws}] снят: [${key}] [${done2}] = ${verdict} · ${author}`,
     inviteOwnerless: (who, standing) => `платформа зовёт роль ${who} в дело: место ${standing} погасло, его строки ничьи`,
     inviteAnswerWaiting: (who, standing) => `платформа зовёт роль ${who} в дело: ответ ждёт приёма, спросившее место ${standing} ушло`
   },
   en: {
-    ask: (author, to, toPlace, key, done, form, advice) => `${author} asks the role ${to}${toPlace} [${key}]: “${done}”${form}${advice}`,
+    ask: (author, to, toPlace, key, done2, form, advice) => `${author} asks the role ${to}${toPlace} [${key}]: “${done2}”${form}${advice}`,
     place: (place) => `(seat ${place})`,
     yesNo: () => "answer: yes or no (yes | no)",
     free: () => "answer in your own words",
@@ -191,7 +191,7 @@ var ASK = {
     advice: (option, why) => `recommended: ${option}${why}`,
     answer: (author, refersTo, reply) => `${author} answers [${refersTo}]: ${reply}`,
     ack: (refersTo, reply, author) => `answer [${refersTo}] accepted${reply} · ${author}`,
-    withdrawn: (withdraws, key, done, verdict, author) => `question [${withdraws}] withdrawn: [${key}] [${done}] = ${verdict} · ${author}`,
+    withdrawn: (withdraws, key, done2, verdict, author) => `question [${withdraws}] withdrawn: [${key}] [${done2}] = ${verdict} · ${author}`,
     inviteOwnerless: (who, standing) => `the platform calls the role ${who} to the case: the seat ${standing} is gone, its lines are nobody's`,
     inviteAnswerWaiting: (who, standing) => `the platform calls the role ${who} to the case: an answer awaits acceptance, the asking seat ${standing} has left`
   }
@@ -445,7 +445,7 @@ var ROOM = {
     closed: (reason) => `дело закрыто: ${reason}`,
     objection: (author, reason) => `${author} возражает против закрытия: ${reason}`,
     lateObjection: (author) => `${author} возразил после закрытия`,
-    progress: (key, done, verdict, note, author) => `[${key}] [${done}] = ${verdict}${note} · ${author}`,
+    progress: (key, done2, verdict, note2, author) => `[${key}] [${done2}] = ${verdict}${note2} · ${author}`,
     opened: (author) => `дело открыл ${author}`,
     joined: (who) => `вошёл ${who}`,
     left: (who, reason) => `вышел ${who}${reason ? `; причина: ${reason}` : ""}`,
@@ -486,7 +486,7 @@ var ROOM = {
     closed: (reason) => `case closed: ${reason}`,
     objection: (author, reason) => `${author} objects to closing: ${reason}`,
     lateObjection: (author) => `${author} objected after the close`,
-    progress: (key, done, verdict, note, author) => `[${key}] [${done}] = ${verdict}${note} · ${author}`,
+    progress: (key, done2, verdict, note2, author) => `[${key}] [${done2}] = ${verdict}${note2} · ${author}`,
     opened: (author) => `case opened by ${author}`,
     joined: (who) => `entered ${who}`,
     left: (who, reason) => `left ${who}${reason ? `; reason: ${reason}` : ""}`,
@@ -763,6 +763,7 @@ var PROCESS = {
   log: null
 };
 var currentScope = () => als.getStore() ?? PROCESS;
+var runIn = (scope, fn) => als.run(scope, fn);
 function scoped(init) {
   const key = {};
   const own = () => {
@@ -1564,7 +1565,7 @@ function foldedTacts(all) {
   return new Set(tacts.filter((f) => f !== last));
 }
 var tactAt = (frames) => (frames ?? []).filter(isTact).map((f) => typeof f.received_at === "string" ? f.received_at : "").reduce((a, b) => b > a ? b : a, "");
-function splitBatch(all, keep, has) {
+function splitBatch(all, keep2, has) {
   const folded = foldedTacts(all);
   for (const { latest, superseded: superseded2 } of graphFolds(all)) {
     for (const frame of superseded2) {
@@ -1572,25 +1573,25 @@ function splitBatch(all, keep, has) {
       carryGraphMarks(latest, [...deliveryKeys(frame), eventKeyOf(frame)].filter(Boolean));
     }
   }
-  let kept2 = all.filter((f) => !folded.has(f) && !eventIn(f, has));
+  let kept3 = all.filter((f) => !folded.has(f) && !eventIn(f, has));
   for (; ; ) {
-    const shown = new Set(kept2.slice(0, keep));
+    const shown = new Set(kept3.slice(0, keep2));
     const marks = /* @__PURE__ */ new Set();
     const local = (k) => marks.has(k) || has(k);
-    const texts = kept2.filter((f) => {
+    const texts = kept3.filter((f) => {
       if (!asText(f)) return true;
       if (eventIn(f, local)) return false;
       for (const k of deliveryKeys(f, !shown.has(f))) marks.add(k);
       return true;
     });
     const next = texts.filter((f) => asText(f) || !eventIn(f, local));
-    if (next.length < kept2.length) {
-      kept2 = next;
+    if (next.length < kept3.length) {
+      kept3 = next;
       continue;
     }
-    const on = new Set(next.slice(0, keep));
+    const on = new Set(next.slice(0, keep2));
     return {
-      shown: next.slice(0, keep),
+      shown: next.slice(0, keep2),
       kept: next,
       keys: all.flatMap((f) => deliveryKeys(f, !on.has(f)))
     };
@@ -2267,6 +2268,19 @@ var SKILLS_ROOT_ENV = envName("SKILLS_ROOT");
 var FIELDS_CAPABILITY = STRUCTURED_CAPABILITY;
 var FIELDS_CAPABILITIES = { experimental: { [FIELDS_CAPABILITY]: {} } };
 
+// js/bridge/store.ts
+import { createHash as createHash3 } from "node:crypto";
+import {
+  appendFileSync as appendFileSync2,
+  mkdirSync,
+  readFileSync as readFileSync8,
+  renameSync as renameSync2,
+  statSync as statSync2,
+  unlinkSync,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { join as join6 } from "node:path";
+
 // js/bridge/build.ts
 var BUILD = buildOf(import.meta.url);
 
@@ -2310,12 +2324,338 @@ var CFG = new Proxy({}, {
   has: (_, k) => !!cfgSlot.cfg && Reflect.has(cfgSlot.cfg, k)
 });
 
+// js/bridge/journal-fold.ts
+var WINDOW_MS = 6e4;
+var UUID2 = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+var ROOT = /\.root-[0-9a-f]{12}\b/g;
+var shapeOf = (line) => line.replace(UUID2, "<id>").replace(ROOT, ".root-<id>");
+function createFold(now2 = Date.now, windowMs2 = WINDOW_MS) {
+  const open = /* @__PURE__ */ new Map();
+  return (line) => {
+    const t = now2();
+    const out2 = [];
+    for (const [shape2, s2] of open)
+      if (t - s2.at >= windowMs2) {
+        if (s2.folded)
+          out2.push(
+            `repeated ${s2.folded} more time(s) within ${windowMs2 / 1e3} s, last: ${s2.last}`
+          );
+        open.delete(shape2);
+      }
+    const shape = shapeOf(line);
+    const s = open.get(shape);
+    if (s) {
+      s.folded++;
+      s.last = line;
+      return out2;
+    }
+    open.set(shape, { at: t, folded: 0, last: line });
+    out2.push(line);
+    return out2;
+  };
+}
+var folds = /* @__PURE__ */ new Map();
+function foldInto(path, line) {
+  let fold = folds.get(path);
+  if (!fold) folds.set(path, fold = createFold());
+  return fold(line);
+}
+
+// js/bridge/store.ts
+var b64url = (buf) => Buffer.from(buf).toString("base64url");
+var sha256 = (s) => createHash3("sha256").update(s).digest();
+var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function storePath() {
+  const u = new URL(CFG.serverUrl);
+  const h = b64url(sha256(u.origin + u.pathname)).slice(0, 10);
+  return join6(CFG.authDir, `${u.hostname}_${h}.json`);
+}
+function grantLogPath() {
+  return join6(CFG.authDir, "grant.log");
+}
+function grantLog(msg) {
+  appendJournal(grantLogPath(), msg);
+}
+function rotateJournal(path, max) {
+  try {
+    if (statSync2(path).size > max) renameSync2(path, `${path}.1`);
+  } catch {
+  }
+}
+function appendJournal(path, msg) {
+  try {
+    const lines = foldInto(path, msg);
+    if (!lines.length) return;
+    mkdirSync(CFG.authDir, { recursive: true, mode: 448 });
+    rotateJournal(path, 128e3);
+    const at2 = `${(/* @__PURE__ */ new Date()).toISOString()} pid=${process.pid} ${BUILD}`;
+    appendFileSync2(path, lines.map((l) => `${at2} ${l}
+`).join(""), { mode: 384 });
+  } catch {
+  }
+}
+function downPath() {
+  return storePath() + ".down";
+}
+function downProbeLockPath() {
+  return storePath() + ".down.probe";
+}
+function loadDown() {
+  try {
+    const rec4 = JSON.parse(readFileSync8(downPath(), "utf8"));
+    return Number.isFinite(rec4?.step) && Number.isFinite(rec4?.notBefore) ? rec4 : null;
+  } catch {
+    return null;
+  }
+}
+function saveDown(rec4) {
+  try {
+    mkdirSync(CFG.authDir, { recursive: true, mode: 448 });
+    const tmp = `${downPath()}.tmp-${process.pid}`;
+    writeFileSync2(tmp, JSON.stringify(rec4), { mode: 384 });
+    renameSync2(tmp, downPath());
+  } catch {
+  }
+}
+function clearDown() {
+  try {
+    unlinkSync(downPath());
+  } catch {
+  }
+}
+
+// js/shared/seam-entrance.ts
+import { createHash as createHash4, randomBytes } from "node:crypto";
+import { linkSync, mkdirSync as mkdirSync2, readFileSync as readFileSync9, renameSync as renameSync3, unlinkSync as unlinkSync2, writeFileSync as writeFileSync3 } from "node:fs";
+var ownPidAlive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+var readLock = (path) => {
+  try {
+    return JSON.parse(readFileSync9(path, "utf8"));
+  } catch {
+    return null;
+  }
+};
+function takeFileLock(path, staleMs) {
+  const token = `${process.pid}-${randomBytes(8).toString("hex")}`;
+  const body = JSON.stringify({ pid: process.pid, token, started_at: Date.now() });
+  const release = () => {
+    if (readLock(path)?.token === token) {
+      try {
+        unlinkSync2(path);
+      } catch {
+      }
+    }
+  };
+  const claim = () => {
+    const tmp = `${path}.${token}`;
+    writeFileSync3(tmp, body, { mode: 384 });
+    try {
+      linkSync(tmp, path);
+      return true;
+    } catch (e) {
+      if (e.code === "EEXIST") return false;
+      throw e;
+    } finally {
+      try {
+        unlinkSync2(tmp);
+      } catch {
+      }
+    }
+  };
+  try {
+    if (claim()) return { held: true, release };
+    const held = readLock(path);
+    if (held && ownPidAlive(held.pid) && Date.now() - held.started_at < staleMs)
+      return { held: false, fault: null, holder: { pid: held.pid, started_at: held.started_at } };
+    const mistake = carryAwayStale(path, held?.token);
+    if (mistake) return { held: false, fault: mistake.putBack ? null : mistake.word };
+    return claim() ? { held: true, release } : { held: false, fault: null };
+  } catch (e) {
+    return { held: false, fault: `${path}: ${e.message}` };
+  }
+}
+function carryAwayStale(path, staleToken) {
+  const away = `${path}.stale-${process.pid}-${randomBytes(6).toString("hex")}`;
+  try {
+    renameSync3(path, away);
+  } catch {
+    return null;
+  }
+  if (readLock(away)?.token !== staleToken) {
+    try {
+      linkSync(away, path);
+    } catch {
+      return {
+        putBack: false,
+        word: `a live lock was carried away by mistake and could not be put back (${path} is taken again); it is left as ${away}`
+      };
+    }
+    try {
+      unlinkSync2(away);
+    } catch {
+    }
+    return {
+      putBack: true,
+      word: `a live lock was carried away by mistake and put back — ${path} is held`
+    };
+  }
+  try {
+    unlinkSync2(away);
+  } catch {
+  }
+  return null;
+}
+
 // js/bridge/errors.ts
+var NOT_SENT = "not-sent";
+var UNKNOWN = "unknown";
+var UpstreamError = class extends Error {
+  static NOT_SENT = NOT_SENT;
+  static UNKNOWN = UNKNOWN;
+  kind;
+  // `presented` carries the access token the refused request actually used —
+  // knowledge only the caller has. The store may have moved on since, and a
+  // token a sibling has already replaced must not be blamed for this refusal.
+  presented;
+  // `outcome` says whether the request this error ends could ALREADY have taken
+  // effect upstream. NOT_SENT — it never reached the server, so a retry is free.
+  // UNKNOWN — it went out and the answer was lost, so a blind retry may write a
+  // second time. Nothing between those two is honest, and saying neither is what
+  // made "retry the call" dangerous: under one sentence lived both outcomes, and
+  // the caller could not tell them apart. Witnessed: an update reported as failed
+  // had applied, and the retry advised by that sentence collided with its own
+  // first write.
+  outcome;
+  // `retryable` marks a network failure worth another knock from the bridge
+  // itself: a connection that failed outright. A timeout is not — it already
+  // spent the whole deadline, and repeating it multiplies the wait.
+  retryable;
+  constructor(message, kind2, presented = null, outcome = UNKNOWN, retryable = false) {
+    super(message);
+    this.kind = kind2;
+    this.presented = presented;
+    this.outcome = outcome;
+    this.retryable = retryable;
+  }
+};
+var DownError = class extends UpstreamError {
+  /** How long before the bridge's next knock, on this machine's clock. */
+  waitMs;
+  constructor(cause, outcome, retryable, waitMs) {
+    super(downMessage(cause, waitMs), "network", null, outcome, retryable);
+    this.waitMs = waitMs;
+  }
+};
+var downMessage = (cause, waitMs) => `${cause ? `${cause} — ` : "not sent — "}server unavailable — call again in about ${Math.max(1, Math.ceil(waitMs / 1e3))} s`;
 var CLOSED = /* @__PURE__ */ new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
 var closedUnder = (e) => {
   const err = e;
   return CLOSED.has(err?.code ?? "") || CLOSED.has(err?.cause?.code ?? "");
 };
+function errorCode(e) {
+  const err = e;
+  return err?.cause?.code ?? err?.code;
+}
+function errorMessage(e) {
+  return e instanceof Error ? e.message : String(e);
+}
+
+// js/bridge/downwindow.ts
+var NET_BACKOFF_MS = (process.env[envName("BRIDGE_NET_BACKOFF_MS")] || "1000,2000,4000").split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0);
+var DOWN_CAP_MS = 6e4;
+function downStepMs(failures) {
+  const last = NET_BACKOFF_MS.length - 1;
+  if (last < 0) return DOWN_CAP_MS;
+  const doubling = 2 ** Math.min(600, Math.max(0, failures - last));
+  return Math.min(DOWN_CAP_MS, NET_BACKOFF_MS[Math.min(failures, last)] * doubling);
+}
+var PROBE_WAIT_MS = 2e3;
+var FREE = {
+  probe: false,
+  release: () => {
+  }
+};
+function admit() {
+  const rec4 = loadDown();
+  if (!rec4) return { refused: false, knock: FREE };
+  const left = rec4.notBefore - Date.now();
+  if (left > 0) return { refused: true, waitMs: left };
+  const lock = takeFileLock(downProbeLockPath(), 2 * CFG.timeoutMs + 5e3);
+  if (!lock.held) {
+    if (lock.fault === null) return { refused: true, waitMs: PROBE_WAIT_MS };
+    log(`down window: the probe lock is out of reach (${lock.fault}) — knocking anyway`);
+  } else log("down window: its time is up — this knock is the machine's one probe");
+  return {
+    refused: false,
+    knock: { probe: true, release: lock.held ? lock.release : FREE.release }
+  };
+}
+var afterAnswer = [];
+var onAnswered = (f) => void afterAnswer.push(f);
+function answered(knock) {
+  try {
+    if (knock.probe && loadDown()) {
+      log("the server answers again — the down window is closed");
+      clearDown();
+    }
+  } finally {
+    knock.release();
+  }
+  for (const f of afterAnswer) f();
+}
+function failed(knock, retryAfterMs2) {
+  try {
+    const now2 = Date.now();
+    const rec4 = loadDown();
+    if (rec4 && !knock.probe) {
+      const notBefore = Math.max(rec4.notBefore, now2 + retryAfterMs2);
+      if (notBefore > rec4.notBefore) saveDown({ ...rec4, notBefore });
+      return Math.max(0, notBefore - now2);
+    }
+    const pause2 = Math.max(Math.random() * downStepMs(rec4?.step ?? 0), retryAfterMs2);
+    saveDown({ step: (rec4?.step ?? 0) + 1, notBefore: now2 + pause2, since: rec4?.since ?? now2 });
+    log(`the server is down for the machine — no bridge knocks for ${Math.round(pause2)}ms`);
+    return pause2;
+  } finally {
+    knock.release();
+  }
+}
+var DOWN_HTTP = /* @__PURE__ */ new Set([502, 503, 504]);
+var NEVER_LEFT = /* @__PURE__ */ new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ERR_SOCKET_BAD_PORT",
+  "ConnectionRefused"
+]);
+function retryAfterMs(header, body) {
+  const h = (header ?? "").trim();
+  const fromHeader = /^\d+(?:\.\d+)?$/.test(h) ? Number(h) * 1e3 : (Date.parse(h) || 0) - Date.now();
+  let inner = 0;
+  try {
+    const view = JSON.parse(body);
+    const secs = Number(view?.errors?.[0]?.data?.retry_after_secs);
+    inner = Number.isFinite(secs) ? secs * 1e3 : 0;
+  } catch {
+  }
+  return Math.max(0, fromHeader, inner);
+}
+function downHttp(knock, status, body, retryAfter) {
+  return new DownError(
+    `upstream HTTP ${status}: ${body}`,
+    UpstreamError.UNKNOWN,
+    false,
+    failed(knock, retryAfter)
+  );
+}
 
 // js/bridge/oauth/discovery.ts
 var REGISTRATION_REUSE_MS = 45 * 6e4;
@@ -2347,9 +2687,172 @@ var SAFE_ACTIONS = {
   [tool("realm")]: /* @__PURE__ */ new Set(["list"])
 };
 
+// js/bridge/returngate.ts
+var envMs = (name, dflt) => {
+  const v = Number(process.env[envName(name)]);
+  return Number.isFinite(v) && v > 0 ? v : dflt;
+};
+var STEP_MS = envMs("BRIDGE_RETURN_STEP_MS", 1e3);
+var CAP_MS = envMs("BRIDGE_RETURN_CAP_MS", 6e4);
+var AT_ONCE = 2;
+var FIXED = ((v) => v && Number(v) >= 0 && Number(v) < 1 ? Number(v) : null)(
+  process.env[envName("BRIDGE_RETURN_DRAW")]
+);
+var draw = () => FIXED ?? Math.random();
+var gates = /* @__PURE__ */ new Map();
+var gateOf = (server) => {
+  let g = gates.get(server);
+  if (!g) gates.set(server, g = { probe: null, waiting: 0, returns: 0, out: 0, turns: [] });
+  return g;
+};
+async function turn(g) {
+  if (g.out < AT_ONCE && !g.turns.length) return void g.out++;
+  await new Promise((r) => g.turns.push(r));
+}
+function done(g) {
+  const next = g.turns.shift();
+  if (next)
+    next();
+  else g.out--;
+}
+async function knocked(g, knock) {
+  try {
+    return await knock();
+  } finally {
+    done(g);
+  }
+}
+async function throughGate(server, knock, kind2 = "return") {
+  const g = gateOf(server);
+  if (kind2 === "open" && !g.probe && g.waiting === 0 && g.out < AT_ONCE) {
+    g.out++;
+    return knocked(g, knock);
+  }
+  if (kind2 === "return" && !g.probe && g.returns === 0) {
+    log("return gate: this session is the machine's probe");
+    g.returns++;
+    const run = turn(g).then(() => knocked(g, knock));
+    g.probe = run.then(
+      () => null,
+      (e) => e instanceof DownError ? e : null
+    );
+    try {
+      return await run;
+    } finally {
+      await g.probe;
+      g.probe = null;
+      g.returns--;
+    }
+  }
+  if (kind2 === "return") g.returns++;
+  try {
+    g.waiting++;
+    try {
+      for (let p = g.probe; p; p = g.probe) {
+        const down = await p;
+        if (down instanceof DownError) throw down;
+      }
+      if (kind2 === "return" || g.waiting > AT_ONCE) {
+        const window = Math.min(CAP_MS, STEP_MS * g.waiting);
+        const wait = Math.floor(draw() * window);
+        log(
+          `return gate: ${g.waiting} waiting — this one goes in ${wait} ms (window ${window} ms)`
+        );
+        await sleep(wait);
+      }
+      await turn(g);
+    } finally {
+      g.waiting--;
+    }
+    return await knocked(g, knock);
+  } finally {
+    if (kind2 === "return") g.returns--;
+  }
+}
+
+// js/bridge/windowfetch.ts
+async function throughWindow(send2) {
+  const gate = admit();
+  if (gate.refused) throw new DownError(null, UpstreamError.NOT_SENT, false, gate.waitMs);
+  let res;
+  try {
+    res = await send2();
+  } catch (e) {
+    if (!NEVER_LEFT.has(errorCode(e) ?? "")) {
+      gate.knock.release();
+      throw e;
+    }
+    const why = `upstream unreachable: ${errorMessage(e)}`;
+    throw new DownError(why, UpstreamError.NOT_SENT, true, failed(gate.knock, 0));
+  }
+  if (DOWN_HTTP.has(res.status)) {
+    const body = await res.text().catch(() => "");
+    const pause2 = retryAfterMs(res.headers.get("retry-after"), body);
+    throw downHttp(gate.knock, res.status, body.slice(0, 300), pause2);
+  }
+  answered(gate.knock);
+  return res;
+}
+
 // js/bridge/sessionclose.ts
 var CLOSE_MS = Number(process.env[envName("BRIDGE_SESSION_CLOSE_MS")]) || 3e3;
 var flying = scoped(() => /* @__PURE__ */ new Set());
+var kept2 = /* @__PURE__ */ new Map();
+var keyOf = (c) => `${c.server}
+${c.s.id}`;
+var note = (line) => {
+  log(line);
+  grantLog(line);
+};
+var gated = (c) => runIn(c.scope, () => {
+  if (CFG.serverUrl !== c.server)
+    return Promise.resolve(unsent(c.s.id, "its session's scope is gone"));
+  return throughGate(c.server, () => send(c), "open").catch(
+    (e) => e instanceof DownError ? keep(c) : note(`closing upstream session ${c.s.id}: ${errorMessage(e)}`)
+  );
+});
+function keep(c) {
+  if (!kept2.size) process.once("exit", leftUnsent);
+  kept2.set(keyOf(c), c);
+  note(`closing upstream session ${c.s.id} (${c.why}): kept — the server is down for the machine`);
+}
+var unsent = (id, why) => note(`closing upstream session ${id}: not sent (${why}) — the server ends it by its own term`);
+function leftUnsent() {
+  for (const c of kept2.values()) unsent(c.s.id, "the process ended");
+}
+onAnswered(() => {
+  const server = CFG.serverUrl;
+  const mine = [...kept2.values()].filter((c) => c.server === server);
+  if (!mine.length || loadDown()) return;
+  for (const c of mine) kept2.delete(keyOf(c));
+  if (!kept2.size) process.removeListener("exit", leftUnsent);
+  for (const c of mine) void gated(c);
+});
+async function send(c) {
+  const { s, why } = c;
+  if (loadDown()) return keep(c);
+  const headers = { "mcp-session-id": s.id };
+  if (s.token) headers.authorization = `Bearer ${s.token}`;
+  if (s.protocolVersion) headers["mcp-protocol-version"] = s.protocolVersion;
+  let outcome;
+  try {
+    const res = await throughWindow(
+      () => namedFetch(c.server, {
+        method: "DELETE",
+        headers,
+        signal: AbortSignal.timeout(CLOSE_MS)
+      })
+    );
+    res.body?.cancel?.().catch(() => {
+    });
+    outcome = `HTTP ${res.status}`;
+  } catch (e) {
+    if (e instanceof DownError) return keep(c);
+    const timedOut = e?.name === "TimeoutError";
+    outcome = timedOut ? `no answer within ${CLOSE_MS}ms` : errorMessage(e);
+  }
+  note(`closing upstream session ${s.id} (${why}): ${outcome}`);
+}
 
 // js/shared/toolreads.ts
 var READ_TOOLS2 = new Set(["look", "orient", "search", "semantic_search"].map(tool));
@@ -2440,8 +2943,8 @@ function batchBodyText(frames, body, riding = []) {
 ${bodies.join("\n\n")}`;
 }
 function staleBatch(all, has, riding = []) {
-  const { shown: frames, kept: kept2, keys } = splitBatch(all, STALE_BURST_KEEP, has);
-  const count = kept2.length;
+  const { shown: frames, kept: kept3, keys } = splitBatch(all, STALE_BURST_KEEP, has);
+  const count = kept3.length;
   if (!count) return { text: "", keys };
   const body = {
     head: words(STALE).head(count, frames.length),
@@ -2730,8 +3233,8 @@ function attach(path, o) {
 }
 
 // js/dsh/seat.ts
-import { readdirSync as readdirSync2, readFileSync as readFileSync8 } from "node:fs";
-import { join as join6 } from "node:path";
+import { readdirSync as readdirSync2, readFileSync as readFileSync10 } from "node:fs";
+import { join as join7 } from "node:path";
 
 // js/shared/canon.ts
 import { realpathSync } from "node:fs";
@@ -2754,7 +3257,7 @@ var RETRY_MS2 = 1e3;
 var LATE_RETRY_MS = 5e3;
 function holdOf(authDir, key) {
   try {
-    return JSON.parse(readFileSync8(holdFilePathOf(authDir, key), "utf8"));
+    return JSON.parse(readFileSync10(holdFilePathOf(authDir, key), "utf8"));
   } catch {
     return null;
   }
@@ -2774,7 +3277,7 @@ function ownSeats(authDir, startedAt) {
     const dir = standingsDirOf(authDir);
     held = readdirSync2(dir).filter((f) => f.endsWith(".key")).map((f) => {
       try {
-        return readFileSync8(join6(dir, f), "utf8").trim();
+        return readFileSync10(join7(dir, f), "utf8").trim();
       } catch {
         return "";
       }
@@ -2837,7 +3340,7 @@ function startHearing(agent, log2, startedAt = Date.now()) {
     const seen = seenIds(seenPath);
     const sending = /* @__PURE__ */ new Set();
     const known = (k) => seen.has(k) || sending.has(k);
-    const send = (text3, keys) => {
+    const send2 = (text3, keys) => {
       const a = agent();
       if (!a) return log2(W3().notDelivered("no live agent"));
       for (const k of keys) sending.add(k);
@@ -2874,12 +3377,12 @@ function startHearing(agent, log2, startedAt = Date.now()) {
             const keys = deliveryKeys(f);
             if (keys.some(known)) return;
             if (!addressedToMine(f)) return;
-            return send(frameToText(f, ev.raw ?? ""), keys);
+            return send2(frameToText(f, ev.raw ?? ""), keys);
           }
           case "stale":
           case "backlog": {
             const b = staleOf(ev, known);
-            if (b.text) return send(b.text, b.keys);
+            if (b.text) return send2(b.text, b.keys);
             return void b.keys.forEach((k) => noteSeen(seenPath, k, seen));
           }
           case "dead":
@@ -2935,10 +3438,10 @@ function createHold(log2) {
   let wake = null;
   const loud = (p) => void p.catch((e) => log2(e.message));
   const run = (a, signal) => new Promise((resolve4) => {
-    let done = false;
+    let done2 = false;
     const finish = () => {
-      if (done) return;
-      done = true;
+      if (done2) return;
+      done2 = true;
       clearTimeout(timer);
       signal.removeEventListener("abort", finish);
       if (task === own) task = null;
@@ -3421,8 +3924,8 @@ function createRootSeat(ctx, startedAt, authDir, log2) {
 }
 
 // js/shared/covercontract.ts
-import { readFileSync as readFileSync9 } from "node:fs";
-import { join as join7 } from "node:path";
+import { readFileSync as readFileSync11 } from "node:fs";
+import { join as join8 } from "node:path";
 function contractOf(text3, cover = COVER) {
   if (stampOf(text3, cover) === "foreign") return { kind: "foreign" };
   if (repeatedKeys(text3).length) return { kind: "ambiguous" };
@@ -3455,7 +3958,7 @@ function repoContractWarning(dir, lang2) {
   const root = repoRoot(dir);
   if (!root) return null;
   try {
-    return contractWarning(contractOf(readFileSync9(join7(root, COVER.file), "utf8")), lang2);
+    return contractWarning(contractOf(readFileSync11(join8(root, COVER.file), "utf8")), lang2);
   } catch {
     return null;
   }
@@ -3535,8 +4038,8 @@ function createFirstStep(route) {
     take(m, running) {
       const g = gate;
       if (!g || !running) return null;
-      return new Promise((done, fail) => {
-        const h = { m, done, fail };
+      return new Promise((done2, fail) => {
+        const h = { m, done: done2, fail };
         g.held.push(h);
         g.wake();
         h.timer = setTimeout(() => {
@@ -3650,7 +4153,7 @@ var args = (raw) => {
   }
 };
 function createTurnEnds(opts) {
-  let turn = null;
+  let turn2 = null;
   let heard = null;
   const laid = /* @__PURE__ */ new Map();
   const speaking = /* @__PURE__ */ new Set();
@@ -3669,7 +4172,7 @@ function createTurnEnds(opts) {
     else laid.delete(key);
     return true;
   };
-  const note = (key) => {
+  const note2 = (key) => {
     if (typeof key === "string" && key) laid.set(key, (laid.get(key) ?? 0) + 1);
   };
   function user(m, t) {
@@ -3685,38 +4188,38 @@ function createTurnEnds(opts) {
     }
   }
   function end(reason) {
-    const t = turn;
-    turn = null;
+    const t = turn2;
+    turn2 = null;
     speaking.clear();
     if (!t || t.woken || reason?.kind !== "completed") return;
     if (lostWord({ ...t, heard }) && opts.on()) opts.wake(words(TURN).wake());
   }
   return {
     laid(m) {
-      note(m?.id);
-      note(textOf3(m?.content));
+      note2(m?.id);
+      note2(textOf3(m?.content));
     },
     onEvent(ev) {
       const type = ev?.type;
       const data = ev?.data;
-      if (type === "turn/start") turn = fresh();
+      if (type === "turn/start") turn2 = fresh();
       else if (type === "turn/end") end(data?.reason);
-      if (!turn) return;
-      if (type === "user/message") user(data, turn);
+      if (!turn2) return;
+      if (type === "user/message") user(data, turn2);
       else if (type === "assistant/message") {
         const blocks = Array.isArray(data?.message?.content) ? data.message.content : [];
         const calls = blocks.filter((b) => b?.type === "tool-call");
         for (const c of calls)
           if (typeof c.id === "string" && speaks(c.name, args(c.arguments))) speaking.add(c.id);
-        turn.text = calls.length ? "" : textOf3(blocks);
+        turn2.text = calls.length ? "" : textOf3(blocks);
       } else if (type === "tool/result") {
         const id = data?.message?.toolCallId;
         if (typeof id === "string" && speaking.delete(id) && !data.message.isError)
-          turn.spoke = true;
+          turn2.spoke = true;
       }
     },
     forget() {
-      turn = null;
+      turn2 = null;
       heard = null;
       laid.clear();
       speaking.clear();
@@ -3798,9 +4301,9 @@ function apply(ctx) {
   });
   on("tools/post-execute", (exec, result, next) => {
     try {
-      const note = riteLines(exec, result, process.cwd());
+      const note2 = riteLines(exec, result, process.cwd());
       const a = agent;
-      if (note && a) sendAfterPublish(a, turnMessage(note));
+      if (note2 && a) sendAfterPublish(a, turnMessage(note2));
     } catch (e) {
       log2(W3().notDelivered(e.message));
     }
