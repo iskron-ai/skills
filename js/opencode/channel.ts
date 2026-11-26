@@ -8,7 +8,6 @@ import { envName, OPENCODE, PLUGIN } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchText, markFrame } from "../shared/frame-text.ts";
-import { isGraphInbox } from "../shared/graph-inbox.ts";
 import { carryGraphReceipt } from "../shared/graph-receipt.ts";
 import { words } from "../shared/lang.ts";
 import { cardFrame } from "../shared/open-cards.ts";
@@ -22,15 +21,17 @@ import { accepting as accepts, archiver } from "./host.ts";
 import { channelEnds } from "./leadends.ts";
 import { type ChildLeads, fromLauncher, NO_LEADS } from "./leadframes.ts";
 import { createLifeChecks } from "./lifecheck.ts";
+import { pileCounts, settleCuts, withCut } from "./pilecuts.ts";
 import {
   carryContextFrame,
   freshRiders,
   handRiders,
   type Pile,
   ridersInBatch,
-  rideWith,
+  ridingOf,
   takeRiders,
   toPile,
+  toRiders,
 } from "./piles.ts";
 import type { Context } from "./plugin.ts";
 import { setupTacts } from "./tacts.ts";
@@ -176,20 +177,15 @@ export function setupChannel(
   function flush(p: Pile): void {
     if (p.timer) clearTimeout(p.timer);
     p.timer = null;
+    settleCuts(p); // a cut batch's head rides with its frames (pilecuts.ts)
     const frames = fresh(p, p.held.splice(0));
     if (!frames.length) return;
     // A pile of counts only wakes no turn (#6574): it waits for a passing prompt.
-    if (!frames.some((f) => addressedToMine(f))) {
-      p.riders.push(...frames);
-      p.riders = [
-        ...p.riders.filter(isGraphInbox),
-        ...p.riders.filter((f) => !isGraphInbox(f)).slice(-RIDERS_MAX),
-      ];
-      return;
-    }
+    if (!frames.some((f) => addressedToMine(f))) return toRiders(p, frames, RIDERS_MAX);
     const at = Date.now();
     p.pending = { session: "", inbox: null, at };
-    const text = batchText([...takeRiders(p, false).kept, ...frames], frames);
+    const t = takeRiders(p, false);
+    const text = withCut(t.cut, batchText([...t.kept, ...frames], frames));
     void deliver(p.session, text, W.caseBatch(frames.length), "queue", p.child).then((got) => {
       // Without an id the taking is not seen: the next pile goes by the window.
       const inbox = got?.inbox && !takenEarly.delete(got.inbox) ? got.inbox : null;
@@ -236,17 +232,6 @@ export function setupChannel(
   /** The pile's frames whose event has not entered the session yet (seen.ts eventIn). */
   const fresh = freshRiders;
 
-  /**
-   * The piles' riding counts as head lines, the carrier frame under its case's count (#9654);
-   * the piles give them away.
-   */
-  const riding = (ps: Pile[], frame: Frame | null, raw: string): string =>
-    rideWith(
-      ps.flatMap((p) => takeRiders(p, false).kept),
-      frame,
-      raw,
-    );
-
   function loud(session: string | null, text: string, child = false): void {
     say(text, "error");
     void deliver(session, text, W.frame(), "steer", child);
@@ -261,12 +246,22 @@ export function setupChannel(
   function batch(session: string | null, child: boolean, ev: ChannelEvent, what: string): void {
     const parts = separateGraphBatch(ev);
     for (const frame of parts.graph) pile(session, child, frame);
-    const own = piles.get(`${child ? "child" : "root"}:${session ?? ""}`);
+    const lead = launcherWordIn(session, child, parts.rest.frames);
+    const key = `${child ? "child" : "root"}:${session ?? ""}`;
+    if (
+      !lead &&
+      pileCounts(
+        parts.rest,
+        (f) => pile(session, child, f),
+        () => piles.get(key),
+      )
+    )
+      return;
+    const own = piles.get(key);
     noteOwn(own, parts.rest.marks);
     if (!parts.rest.text) return;
     const b = { ...parts.rest, text: ridersInBatch(own, parts.rest) };
-    if (launcherWordIn(session, child, b.frames))
-      void deliver(session, b.text, what, "steer", child);
+    if (lead) void deliver(session, b.text, what, "steer", child);
     else if (!tact(session, child, b, what)) void deliver(session, b.text, what, "queue", child);
   }
 
@@ -430,7 +425,7 @@ export function setupChannel(
           noteOwn(own, deliveryKeys(frame)); // the frame enters as text — the pile's count skips it
           void deliver(
             session,
-            riding(own ? [own] : [], frame, ev.raw ?? ""),
+            ridingOf(own ? [own] : [], frame, ev.raw ?? ""),
             frame?.id != null ? W.frameId(String(frame.id)) : W.frameNoId(),
             "steer",
             child,
@@ -456,9 +451,7 @@ export function setupChannel(
           return;
         case "resumed":
           // The bridge returned the seat itself (#5366): the taken name goes into the session.
-          if (ev.text) {
-            say(ev.text, "warning");
-          }
+          if (ev.text) say(ev.text, "warning");
           return;
         case "return_failed": // a return that did not happen: a word to act on (#5140)
         case "seat_result":

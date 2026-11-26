@@ -233,8 +233,12 @@ test("no wake word (#9345): a human wrote lately, a short line with no question,
     await say("кадр, длинный отчёт");
     await turn(rec, "s-c", { text: `Отчёт: ${"сделано, проверено. ".repeat(20)}` });
     assert.equal(wakes(rec, "s-c").length, 1, "past 280 characters it is a lost word");
-    await stale([roomSaid("defer", 61), progress(62)]);
-    await turn(rec, "s-c");
+    // A stale batch of counts only opens no turn at all (#11359): its counts wait for a prompt.
+    const before = rec.prompts.length;
+    const counts = [roomSaid("defer", 61), progress(62)];
+    lay(event("stale", { frames: counts, marks: staleBatch(counts, () => false).keys }));
+    await delay(600);
+    assert.equal(rec.prompts.length, before, "a stale batch of counts only prompts nothing");
     assert.equal(wakes(rec, "s-c").length, 1, "a stale batch of counts only");
     await stale([roomSaid("defer", 63), ask(80)]);
     await turn(rec, "s-c");
