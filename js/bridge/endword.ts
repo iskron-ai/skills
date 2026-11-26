@@ -44,6 +44,9 @@ export async function endOnWord(
       settleMoved(places, main, socket);
       return { end: none, left: [] };
     }
+    // The api refused the event (endreport.ts): not ended, no fallback, no window to repeat it.
+    if (how === "refused")
+      return { end: { ...none, failed: places.map((s) => s.name ?? "") }, left: [] };
     if (how === "unknown") {
       log(
         `${seatKeyOf(main)}: the stop by its token did not answer: ${why} — the window repeats it`,

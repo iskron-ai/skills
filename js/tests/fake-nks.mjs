@@ -334,8 +334,11 @@ export async function startFakeNks(opts = {}) {
     latestToken: new Map(), // имя места → адрес сокета последнего connect
     stopAbsent: opts.stopAbsent ?? 0, // 404 | 405: api без снятия по ws-токену (№675)
     // The end event by the ws token (#11362): POST /api/channel/ws/{token}/event {event,
-    // session_id?}. endEvent: true — the route answers 200 {ended:[ids]}; 404 (no rule) | 405 —
-    // an api without it, the shape deployed today (the default: 404).
+    // session_id?}. endEvent: true — the route answers 200 {ended:[ids], event} (a token not
+    // current — 404 ws_token_not_current, nothing ended); 404 (no rule) | 405 — an api without
+    // it, the shape deployed today (the default: 404); {status, rule} — that refusal, nothing ended
+    // (403 human_seat_needs_front, 422 event_unknown | session_id_invalid); "drop" — the
+    // connection cut with no answer. stopKeeps applies: a seat another channel holds is not ended.
     endEvent: opts.endEvent ?? 404,
     endEvents: [], // every end event's body as it came, answered or not
     takeInWindow: null, // "karta:name": чужой connect сразу после последней сверки моста (№677)
@@ -696,7 +699,11 @@ export async function startFakeNks(opts = {}) {
     const endRoute = p.startsWith("/api/channel/ws/") && p.endsWith("/event");
     if (endRoute && req.method === "POST") {
       st.endEvents.push(JSON.parse((await body(req)) || "{}"));
-      if (st.endEvent !== true) return json(res, st.endEvent, { title: "Not Found" });
+      const e = st.endEvent;
+      if (e === "drop") return req.socket.destroy(); // a network error: no answer at all
+      if (typeof e === "object" && e)
+        return json(res, e.status, { title: "Refused", errors: [{ rule: e.rule, message: "" }] });
+      if (e !== true) return json(res, e, { title: "Not Found" });
     }
     if (
       ((p.startsWith("/api/channel/ws/") && p.endsWith("/stop")) || endRoute) &&
@@ -728,7 +735,11 @@ export async function startFakeNks(opts = {}) {
         ended.push({ standing_id: pl.standing_id, ended_at: new Date().toISOString() });
       }
       if (st.stopReplyDelayMs) await new Promise((r) => setTimeout(r, st.stopReplyDelayMs));
-      if (endRoute) return json(res, 200, { ended: ended.map((e) => e.standing_id) });
+      if (endRoute)
+        return json(res, 200, {
+          ended: ended.map((e) => e.standing_id),
+          event: st.endEvents.at(-1)?.event,
+        });
       return json(res, 200, {
         channel_id: st.wsChannel.get(tok),
         ended_by: "self",

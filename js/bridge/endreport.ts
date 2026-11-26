@@ -3,7 +3,8 @@
 // {event, session_id?}; the api ends that session's seats (all the channel's without session_id)
 // and answers 200 {ended:[ids]}: ended[] is the authority. An api without the route (404 with no
 // rule, 405) falls back once to the path before it — the stop by the same token (deadstop.ts), or
-// the caller's own end — and says so in the log.
+// the caller's own end — and says so in the log. A 404 ws_token_not_current ends nothing and
+// stops nothing; a 403 or 422 is the api's refusal of the event: logged, no fallback, no repeat.
 import { apiBase } from "../shared/channel.ts";
 import { namedFetch } from "../shared/http.ts";
 import { endedOf, ruleOf, type Stop, stopBySocket } from "./deadstop.ts";
@@ -22,7 +23,8 @@ export const END_EVENTS: readonly EndEvent[] = [
 ];
 
 export interface Reported {
-  how: Stop;
+  /** refused — the api refused the event itself (403, 422): nothing ended, no fallback, no repeat. */
+  how: Stop | "refused";
   why: string;
   ended: string[];
 }
@@ -55,8 +57,14 @@ export async function reportEnd(
     log(`the end (${event}) reported by the socket's token: ${why}`);
     return { how: "stopped", why, ended: endedOf(body) };
   }
-  const rule = res.status === 404 ? ruleOf(body) : null;
-  if (rule === NOT_CURRENT) return { how: "moved", why, ended: [] };
+  const rule = ruleOf(body);
+  // Not current: another holder took the token or the seat ended — nothing ended, no fallback stop.
+  if (res.status === 404 && rule === NOT_CURRENT) return { how: "moved", why, ended: [] };
+  // human_seat_needs_front, event_unknown, session_id_invalid: the event itself is refused.
+  if (res.status === 403 || res.status === 422) {
+    log(`the end (${event}) refused by the api (${rule ?? why}) — no fallback, no repeat`);
+    return { how: "refused", why, ended: [] };
+  }
   if (res.status !== 405 && (res.status !== 404 || rule)) return { how: "unknown", why, ended: [] };
   log(`no end-event route on this api (${why}) — the end (${event}) goes the former way, once`);
   return fallback();

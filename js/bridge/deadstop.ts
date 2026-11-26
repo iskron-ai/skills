@@ -147,6 +147,7 @@ export async function closeDeadSeats(
     return;
   }
   if (how === "moved") return settleMoved(places, main.seat, main.socket);
+  if (how === "refused") return; // the api refused the event (endreport.ts): no fallback, no repeat
   if (how === "unknown")
     return log(
       `${seatKeyOf(main.seat)}: the stop by its token did not answer: ${why} — not closed, the seats go by the platform's term`,

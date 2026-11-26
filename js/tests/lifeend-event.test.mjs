@@ -8,7 +8,16 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { test } from "node:test";
 
-import { closed, journalOf, recordOf, stood, waitFor, withFake } from "./lifeend-kit.mjs";
+import {
+  closed,
+  DEATH_MS,
+  delay,
+  journalOf,
+  recordOf,
+  stood,
+  waitFor,
+  withFake,
+} from "./lifeend-kit.mjs";
 
 const revokesOf = (fake, name) =>
   fake.state.calls.filter(
@@ -74,6 +83,36 @@ for (const absent of [404, 405])
         assert.match(journalOf(dir), /no end-event route on this api \((404|405)/);
       },
       { endEvent: absent },
+    );
+  });
+
+// The api's refusals of the event itself, and a token not current: nothing ended, no fallback
+// stop, no revoke by name, and no repeat — not even by a death window.
+for (const [status, rule] of [
+  [404, "ws_token_not_current"],
+  [403, "human_seat_needs_front"],
+  [422, "event_unknown"],
+  [422, "session_id_invalid"],
+])
+  test(`an end event answered ${status} ${rule}: no fallback, no repeat`, async () => {
+    await withFake(
+      async ({ fake, dir, bridge }) => {
+        const a = await bridge();
+        await stood(a, "ev-no");
+        const r = await a.request("iskron/end", { event: "session_deleted" });
+        assert.equal(r.result?.ended, true, JSON.stringify(r));
+        a.proc.kill("SIGKILL"); // the session ends: a death window would repeat the end now
+        await a.gone();
+        await delay(DEATH_MS + 1000);
+        assert.equal(fake.state.endEvents.length, 1, `the event once:\n${journalOf(dir)}`);
+        assert.equal(fake.state.counts.stops, 0, `no fallback stop:\n${journalOf(dir)}`);
+        assert.equal(revokesOf(fake, "ev-no"), 0, "no revoke by name");
+        assert.ok(!closed(fake, "ev-no"), "nothing ended by the bridge");
+        assert.doesNotMatch(journalOf(dir), /no end-event route/);
+        if (status !== 404)
+          assert.match(journalOf(dir), new RegExp(`refused by the api \\(${rule}\\)`));
+      },
+      { endEvent: { status, rule } },
     );
   });
 
