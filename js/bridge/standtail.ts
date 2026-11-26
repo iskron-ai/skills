@@ -8,15 +8,18 @@ import { mindSlice } from "../shared/mindslice.ts";
 import { callTool } from "./call.ts";
 import { CFG } from "./config.ts";
 import { automaticSeat } from "./seatorigin.ts";
+import { bearer } from "./transport.ts";
 import { readLatest, staleNotice } from "./update.ts";
 
 /**
- * The session's credential — server, grant directory, token (the variable's or the file's) — the
- * cache key's first part; the handle whoami names on each read completes it (mindslice.ts).
+ * The session's credential — server, grant directory and the fingerprint of the token the bridge
+ * presents now (a personal token, else the OAuth access token: a new login is another one) — the
+ * cache key's first part; whoami, kept per it, names the account that completes the key.
  */
 const account = (): string => {
-  const pat = CFG.pat ? createHash("sha256").update(CFG.pat).digest("hex").slice(0, 16) : "";
-  return `${CFG.serverUrl}\n${CFG.authDir}\n${pat}`;
+  const token = bearer();
+  const fp = token ? createHash("sha256").update(token).digest("hex").slice(0, 16) : "";
+  return `${CFG.serverUrl}\n${CFG.authDir}\n${fp}`;
 };
 
 export async function standTail(stood: boolean): Promise<string[]> {

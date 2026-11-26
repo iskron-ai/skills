@@ -6,7 +6,7 @@
 // or commits — the owner's word on #9818; the words themselves live in MIND_SLICE.
 import { LANGS, MIND_ROW, MIND_SLICE, tool } from "../delivery/index.ts";
 import { words } from "./lang.ts";
-import { cachedSlice, type SliceRead } from "./mindcache.ts";
+import { cachedSlice, identityOf, type SliceRead, within } from "./mindcache.ts";
 import { scoped } from "./scope.ts";
 
 /** One tool call on the account's behalf: the answer's text and whether it was a refusal. */
@@ -140,21 +140,21 @@ export async function mindSlice(call: MindCall, options: MindSliceOptions = {}):
   };
   try {
     if (options.account) {
+      const credential = options.account;
+      const w = options.strict
+        ? { unread: fail, pending: () => fail("the rules slice is still being read"), retry: true }
+        : { unread, pending: () => words(MIND_SLICE).pending() };
       // Personal rules never cross accounts: the shared slice is keyed by the account the server
-      // answers this credential for — asked now, on every read, so an account switched under
-      // the same grant directory reads its own; unknown — the read below throws, nothing shared.
-      const handle = await whoami(call);
-      return await cachedSlice(
-        `${options.account}\n@${handle}`,
-        () => readSlice(call, key, handle),
-        options.strict
-          ? {
-              unread: fail,
-              pending: () => fail("the rules slice is still being read"),
-              retry: true,
-            }
-          : { unread, pending: () => words(MIND_SLICE).pending() },
+      // answers this credential for — whoami, kept per the credential's fingerprint (a new login
+      // or another token is another one); unknown — the read throws, nothing shared. The whole
+      // read, whoami included, waits ≤3 s; past it the read goes on in the background.
+      const whole = identityOf(credential, () => whoami(call)).then((handle) =>
+        cachedSlice(`${credential}\n@${handle}`, () => readSlice(call, key, handle), w),
       );
+      const got = await within(whole);
+      if (!got) return w.pending();
+      if ("e" in got) throw got.e;
+      return got.v;
     }
     return (await readSlice(call, key)).block;
   } catch (e) {

@@ -2306,6 +2306,9 @@ export async function startFakeNks(opts = {}) {
         // { delayMs } — медленный сервер: поиск среза отвечает на столько позже.
         if (msg.params.name === "iskron_search" && m?.delayMs)
           await new Promise((r) => setTimeout(r, m.delayMs));
+        // { whoamiDelayMs } — whoami отвечает на столько позже: медленна уже первая ступень чтения.
+        if (msg.params.name === "iskron_me" && m?.whoamiDelayMs)
+          await new Promise((r) => setTimeout(r, m.whoamiDelayMs));
         if (msg.params.name === "iskron_search" && m?.refuse)
           return json(
             res,

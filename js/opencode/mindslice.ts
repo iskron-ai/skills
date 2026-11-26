@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { envName } from "../delivery/index.ts";
 import type { Bridge } from "../shared/bridge-client.ts";
 import { mindSlice, type MindSliceOptions } from "../shared/mindslice.ts";
-import { authDir, textOf } from "./bridge-io.ts";
+import { authDir, grantStamp, textOf } from "./bridge-io.ts";
 
 /** The platform's answer — no longer than this. */
 const SLICE_MS = 10_000;
@@ -26,14 +26,15 @@ function patOf(): string {
 }
 
 /**
- * The credential's part of the shared slice's key: server, grant directory, the token's
- * fingerprint. The account itself — the handle whoami names on each read — completes it
+ * The credential's part of the shared slice's key: server, grant directory and a fingerprint of
+ * the token — the personal token's, else the OAuth grant's as it lies on disk (a new login
+ * rewrites it). whoami, kept per this credential, names the account that completes the key
  * (shared/mindslice.ts): personal rules never cross accounts.
  */
 function account(): string {
-  const token = patOf();
-  const pat = token ? createHash("sha256").update(token).digest("hex").slice(0, 16) : "";
-  return `opencode\n${process.env[envName("BRIDGE_URL")]?.trim() ?? ""}\n${authDir()}\n${pat}`;
+  const token = patOf() || grantStamp();
+  const fp = token ? createHash("sha256").update(token).digest("hex").slice(0, 16) : "";
+  return `opencode\n${process.env[envName("BRIDGE_URL")]?.trim() ?? ""}\n${authDir()}\n${fp}`;
 }
 
 /** Compaction opts into strict failures; root starts keep the default soft diagnostic (#9817). */

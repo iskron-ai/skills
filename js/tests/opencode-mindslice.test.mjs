@@ -5,7 +5,14 @@
 // cover reads them beside its seating word. Fake bridge (opencode-kit.mjs) and the real bridge
 // over the fake server (rootseat-kit.mjs); ISKRON_OPENCODE_PLUGIN aims it at any copy.
 import assert from "node:assert/strict";
-import { appendFileSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -202,6 +209,10 @@ test("an account switched under the same grant directory: Bob's bridge reads Bob
     as("alice", "Правило Алисы");
     assert.match(await rulesOf("s-alice"), /Правило Алисы/);
     const before = sent(files.calls).filter((c) => c.name === "iskron_search").length;
+    // Bob signs in under the same grant directory: the new login rewrites the grant on disk.
+    const auth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+    mkdirSync(auth, { recursive: true });
+    writeFileSync(join(auth, "account-switch-grant.json"), JSON.stringify({ who: "bob" }));
     as("bob", "Правило Боба");
     const bob = await rulesOf("s-bob");
     assert.match(bob, /Правило Боба/, bob);
@@ -216,6 +227,7 @@ test("an account switched under the same grant directory: Bob's bridge reads Bob
     );
   } finally {
     await rec.stop();
+    rmSync(join(process.env.ISKRON_BRIDGE_AUTH_DIR, "account-switch-grant.json"), { force: true });
   }
 });
 

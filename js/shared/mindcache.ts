@@ -98,6 +98,44 @@ export async function cachedSlice(
   return stale ?? w.pending();
 }
 
+/**
+ * The account a credential speaks for, by its fingerprint (`credential` — server, grant
+ * directory, the token's fingerprint): one whoami in flight per credential, the answer kept for
+ * it. A new login or another token is another fingerprint — asked anew; a failure is not kept.
+ */
+const identities = new Map<string, { handle?: string; flight?: Promise<string> }>();
+export function identityOf(credential: string, ask: () => Promise<string>): Promise<string> {
+  const known = identities.get(credential);
+  if (known?.handle) return Promise.resolve(known.handle);
+  if (known?.flight) return known.flight;
+  const flight = ask().then(
+    (handle) => (identities.set(credential, { handle }), handle),
+    (e: unknown) => {
+      identities.delete(credential);
+      throw e;
+    },
+  );
+  identities.set(credential, { flight });
+  return flight;
+}
+
+/**
+ * At most `ms` for `work`: past it null — the work goes on in the background (its own failure
+ * is its own, not the reader's).
+ */
+export async function within<T>(
+  work: Promise<T>,
+  ms = WAIT_MS,
+): Promise<{ v: T } | { e: unknown } | null> {
+  return Promise.race([
+    work.then(
+      (v) => ({ v }),
+      (e: unknown) => ({ e }),
+    ),
+    pause(ms),
+  ]);
+}
+
 /** Tools that only read: a call of any other names a write to its realm. */
 const READS = new Set(["look", "orient", "search", "semantic_search"].map(tool));
 /**

@@ -49,8 +49,8 @@ test("stands never ask readiness and search only the caller's fully addressed mi
   assert.ok(searches.every((c) => c.arguments.realm === "@tester/mind"));
   assert.equal(
     calls.filter((c) => c.name === "iskron_me" && c.arguments?.action === "whoami").length,
-    2,
-    "whoami on each read: the cached slice is the account's the server names now",
+    1,
+    "whoami kept per the credential's fingerprint, not asked on every read",
   );
 });
 

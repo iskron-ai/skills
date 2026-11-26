@@ -33,8 +33,8 @@ test("N sessions of one daemon standing together read the rules slice once", asy
     await ctx.fake.control({ mind: { rules: RULES } });
     const { texts } = await wave(ctx, 4, "many");
     assert.equal(slices(ctx.fake), 1, "one slice read for the account");
-    // The account is asked on every read: the key is the account the server answers for.
-    assert.equal(whoamis(ctx.fake), 4, "one whoami per session's read");
+    // whoami is kept per the credential's fingerprint: one for the sessions of one credential.
+    assert.equal(whoamis(ctx.fake), 1, "one whoami for the credential");
     for (const t of texts) assert.equal(sliceIn(t)?.split("\n")[0], W.head(1), t);
   });
 });
@@ -62,6 +62,21 @@ test("a slow server with nothing cached: the stand answers by ~3 s without rules
     const { texts: next } = await wave(ctx, 1, "filled");
     assert.equal(sliceIn(next[0])?.split("\n")[0], W.head(1), next[0]);
     assert.equal(slices(ctx.fake), 1, "one fetch, the next stand served from it");
+  });
+});
+
+test("a slow whoami: the stand answers by ~3 s without rules, the read goes on and fills the cache", async () => {
+  await withMux(async (ctx) => {
+    await ctx.fake.control({ mind: { rules: RULES, whoamiDelayMs: 5000 } });
+    const t0 = Date.now();
+    const { texts } = await wave(ctx, 1, "slow-who");
+    const took = Date.now() - t0;
+    assert.ok(took < 4500, `the stand waited ${took} ms for whoami`);
+    assert.equal(sliceIn(texts[0]), W.pending(), texts[0]);
+    await new Promise((r) => setTimeout(r, 3500)); // whoami answers, the one fetch lands
+    const { texts: next } = await wave(ctx, 1, "slow-who-next");
+    assert.equal(sliceIn(next[0])?.split("\n")[0], W.head(1), next[0]);
+    assert.equal(whoamis(ctx.fake), 1, "one whoami, kept");
   });
 });
 
