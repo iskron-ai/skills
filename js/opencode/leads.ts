@@ -86,7 +86,9 @@ export function createLeads(d: LeadDoors): Leads {
     // run's end gives (the seat name is reused by the next child); by the name only without one.
     const me: ChildSeat = { seat: l.place?.name ?? null, child, ids: [] };
     const records: ChildSeat[] = [];
-    const server = sendsChildEnded() && !kept;
+    // The launcher's own revoke (own) is the parent's act: the server sends the parent no
+    // child_ended for it (nks-api #48) — nothing waits for one; a late one is a told end.
+    const server = sendsChildEnded() && !kept && !own;
     const told = async (): Promise<void> => {
       await tell(word, wake);
       records.push(toldChildEnded(me)); // a late notice of this end is not a second turn

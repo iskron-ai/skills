@@ -11082,6 +11082,38 @@ test("child_ended for a new seat of the same name is not this child's end: match
   }
 });
 
+// nks-api #48: an end that is the parent's own act (the launcher's revoke of its child's seat) gets
+// no child_ended. Nothing waits for one: the plugin's word goes at once, the launcher's call is
+// not held for the window, and a notice arriving after all is a told end, not a second turn. On
+// the former build the release waited the whole window for a notice that never comes.
+test("the launcher's revoke on a server that sends child_ended: no wait for a notice — the word at once, nothing held", async () => {
+  globalThis[KNOWN] = true;
+  const { b, rec, rootPid, calls } = await leadChild("ce-own", {
+    ISKRON_OPENCODE_CHILD_ENDED_MS: 6000,
+    ...CE_IDS,
+  });
+  try {
+    const at = Date.now();
+    const word = await rec.call(
+      "iskron_channel",
+      { realm: "nks-dev", action: "revoke", standing: `@me:${SUB}` },
+      "root",
+    );
+    assert.match(word.content, /отпущен/);
+    assert.ok(Date.now() - at < 4000, `the launcher's call was held ${Date.now() - at} ms`);
+    await until(() => ends(rec).length === 1, "the end word in the parent", 3000);
+    await runEnded(calls);
+    await delay(200);
+    noticeTo(b, rootPid, `@tester:${SUB}`); // should the server send one after all
+    await until(() => /child_ended сервера о @tester:/.test(rec.said()), "a told end, held back");
+    await delay(300);
+    assert.equal(rootTurns(rec), 1, "one turn in the parent");
+  } finally {
+    await rec.stop();
+    delete globalThis[KNOWN];
+  }
+});
+
 test("a platform message without notice child_ended is no child's end: the plugin's own word after the window", async () => {
   globalThis[KNOWN] = true;
   const { b, rec, rootPid } = await leadChild("ce-other", { ISKRON_OPENCODE_CHILD_ENDED_MS: 800 });
