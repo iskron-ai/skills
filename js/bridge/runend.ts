@@ -110,7 +110,9 @@ export function closeRun(
     // On the dispatcher the cleared busy line goes in the tact before the unsubscribe (#8620 v11).
     const line = addr && closing ? leavingLine(addr.url) : "none";
     // A paused seat keeps its busyness even if nobody takes the handover socket.
-    releaseStanding(why, CFG.satellite && !paused, false, ended, paused);
+    // The end at once (the harness's word, a satellite's end) is the agent's: its watchdogs
+    // open no turn more (the end gate, #11359); a death window's end is not known yet.
+    releaseStanding(why, CFG.satellite && !paused, false, ended, paused, R.late === "now");
     if (paused) R.held = { places, addr };
     // The satellite leaves its cases while still on the board; the last usage snapshot goes before revoke
     // (graph @nks/nks-dev, nodes #6573, #6593, #6401). On a daemon change without a pause the lost

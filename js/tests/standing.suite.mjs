@@ -5521,6 +5521,60 @@ test("watchdog-codex on one's own close puts the batch the bridge flushed into t
   );
 });
 
+// The end gate (graph @nks/nks-dev, node #11359): the agent's session ended (the harness's word,
+// iskron/end) — the watchdog opens no turn more: not the batch the bridge flushed, not the
+// release word. Before the end nothing changes (the own-close probe above). On the former build
+// the end was an own release: the batch went into the thread, the release word to stdout.
+test("watchdog-codex at the agent's end: the flushed batch starts no turn, exit 0", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = codexHome(t);
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+  );
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-end",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await sendRoom(fake, progress(50));
+  await new Promise((r) => setTimeout(r, 500));
+  const reply = await bridge.call("iskron/end", 8, {});
+  assert.equal(reply.result?.ended, true, JSON.stringify(reply));
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the end is no alarm:\n${wd.err}`);
+  assert.doesNotMatch(
+    readFileSync(log, "utf8"),
+    /turn\/start/,
+    `no turn after the end:\n${wd.err}`,
+  );
+  assert.match(wd.err, /сессия агента кончена/);
+});
+
+test("watchdog under Monitor at the agent's end: no line on stdout after the end, exit 0", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, progress(51));
+  await new Promise((r) => setTimeout(r, 500));
+  const before = wd.out;
+  const reply = await bridge.call("iskron/end", 8, {});
+  assert.equal(reply.result?.ended, true, JSON.stringify(reply));
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the end is no alarm:\n${wd.out}\n${wd.err}`);
+  assert.equal(wd.out, before, `a stdout line is a turn — none after the end:\n${wd.out}`);
+  assert.match(wd.err, /сессия агента кончена/);
+});
+
 // Дверь приняла сокет и молчит на upgrade: ожидание пачки на своём отпускании —
 // с пределом, по нему одна громкая строка и ненулевой выход, не вечное молчание.
 test("watchdog-codex on one's own close behind a door that never answers the upgrade exits loudly within the limit", async (t) => {

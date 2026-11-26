@@ -226,6 +226,7 @@ const held = (): Place | null =>
  * reopens and places beside stay on it. `own`: the session's own close, revoke or leave;
  * released carries own and watchdogs leave without alarm (#6638).
  * `keepBusy`: a paused place (suspend.ts); a handed socket not taken by a successor keeps busy.
+ * `ended`: the agent's session ended — released carries it, watchdogs open no turn more.
  */
 export function releaseStanding(
   reason: string,
@@ -233,6 +234,7 @@ export function releaseStanding(
   keepBeside = false,
   own = false,
   keepBusy = false,
+  ended = false,
 ): void {
   if (forget && H.currentKey) dropOwnHoldRecord(H.currentKey, H.currentUrl);
   if (!keepBeside) dropAllExtras(reason, forget, own);
@@ -248,7 +250,13 @@ export function releaseStanding(
     broadcast({ kind: "handover", key, text: handover });
   } else {
     standingLog(`released ${H.currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
-    const released: ChannelEvent = { kind: "released", key, text: reason, ...(own && { own }) };
+    const released: ChannelEvent = {
+      kind: "released",
+      key,
+      text: reason,
+      ...(own && { own }),
+      ...(ended && { ended }),
+    };
     broadcast(released);
     notify("info", released); // the OpenCode plugin drops holding on this word, not a guess (#5140)
   }

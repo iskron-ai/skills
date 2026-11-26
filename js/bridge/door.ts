@@ -90,6 +90,11 @@ export interface ChannelEvent {
   /** kind="released": released by this session's own close or revoke — the watchdog exits without alarm (#6638). */
   own?: true;
   /**
+   * kind="released": the agent's session ended (the harness's word, a satellite's end; graph
+   * @nks/nks-dev, node #11359) — the end gate: a watchdog leaves at once and opens no turn more.
+   */
+  ended?: true;
+  /**
    * kind="released": a seat beside taken off by another (standing_ended, #7504) — forgotten,
    * the main seat holds: the seat's watchdog neither wakes the doer nor leaves.
    */
