@@ -61,6 +61,7 @@ import { isStandCall } from "./stand.ts";
 import { resumeByOrigin, standForHarness } from "./standdelivery.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
 import { localStatus } from "./status.ts";
+import { localStopSeat } from "./stopseat.ts";
 import { loadServerCache, saveServerCache, sleep } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { localSuspend } from "./suspend.ts";
@@ -141,7 +142,16 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
     if (msg.method === "tools/call") wroteTo(String(msg.params?.name), msg.params?.arguments); // the mind slice cache
   }
 }
-const LOCAL = [localStatus, localLeave, localSuspend, localAway, localEnd, localHalted, localRealm];
+const LOCAL = [
+  localStatus,
+  localLeave,
+  localSuspend,
+  localAway,
+  localEnd,
+  localHalted,
+  localRealm,
+  localStopSeat,
+];
 async function deliverOne(msg: JsonRpcMessage): Promise<void> {
   if (refuseLaunch(msg)) return;
   const local = LOCAL.reduce((got, f) => got ?? f(msg), contextCall(msg));

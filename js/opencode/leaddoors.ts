@@ -114,11 +114,19 @@ export interface LeadDoors {
   end(child: string, of?: Place | null): Promise<void>;
   /**
    * A child without a bridge of its own (a marker's return ends it, children.ts): its satellite
-   * seat is taken off by its launcher's bridge. The word — `taken` when the platform took the
-   * seat off or it was already gone; any other outcome says it is not off and why. Never a throw.
-   * `still` — asked right before the revoke; false (stood again) — no revoke, null.
+   * seat is stopped by its launcher's bridge by the child's own socket's token (`key` — the
+   * child's seat key the stop record lies under; none — nothing is stopped, the seat lapses by
+   * its term). The word — `taken` when the stop ended the seat; the name held by another — left
+   * alone; any other outcome says it is not off and why. Never a throw. `still` — asked right
+   * before the stop; false (stood again) — nothing, null.
    */
-  off(child: string, place: Place, taken: string, still: () => boolean): Promise<string | null>;
+  off(
+    child: string,
+    place: Place,
+    taken: string,
+    still: () => boolean,
+    key: string | null,
+  ): Promise<string | null>;
   /** The child's seat name when it is not its satellite; satellite or no seat — null. */
   ownPlace(child: string): string | null;
   /** The child has a bridge in this plugin instance: its run ends by that bridge, not by its launcher's. */

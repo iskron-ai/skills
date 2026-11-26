@@ -4,6 +4,7 @@
 import { ABSORB, tool } from "../delivery/index.ts";
 import { statusUrl as deriveStatusUrl } from "../shared/channel.ts";
 import { words } from "../shared/lang.ts";
+import { CFG } from "./config.ts";
 import { seatField, structuredOf } from "./fields.ts";
 import {
   besideKeyIn,
@@ -23,6 +24,7 @@ import { dropExtra, extraIn, extraPlaces } from "./places.ts";
 import { otherRealm } from "./realms.ts";
 import { lateSeat } from "./runend.ts";
 import { rememberedPlace, replyText } from "./standing.ts";
+import { writeStopRecord } from "./stopseat.ts";
 import { log } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -79,7 +81,9 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
     const s = state.standing;
     if (s && keyOf(s.realm, s.karta, s.name ?? "") !== H.currentKey)
       noteStoodAt(keyOf(s.realm, s.karta, s.name ?? ""), Date.now());
-    holdStanding(url, statusUrl);
+    const key = holdStanding(url, statusUrl);
+    // A satellite's deferred end stops by this socket's token (stopseat.ts, #7621).
+    if (CFG.satellite) writeStopRecord(key, url);
   }
   const content = reply.result?.content;
   if (Array.isArray(content)) {

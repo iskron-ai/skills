@@ -435,6 +435,26 @@ process.stdin.on("data", (chunk) => {
       // A graph's name as the bridge's table names it (js/bridge/realmask.ts); unknown — as given.
       const realm = String(msg.params?.realm ?? "").trim();
       ok(msg.id, { realm: REALMS[realm] ?? realm });
+    } else if (msg.method === "iskron/stopseat") {
+      // The launcher's bridge stops an ended child's seat by its socket's token (js/bridge/
+      // stopseat.ts); the answer's `how` from `${FB_REPLY}.stopseat` (stopped by default),
+      // optionally "how why…".
+      if (process.env.FB_CALLS)
+        appendFileSync(
+          process.env.FB_CALLS,
+          JSON.stringify({
+            name: msg.method,
+            arguments: msg.params,
+            pid: process.pid,
+            id: msg.id,
+          }) + "\n",
+        );
+      let said = "stopped";
+      try {
+        said = readFileSync(`${process.env.FB_REPLY}.stopseat`, "utf8").trim() || said;
+      } catch {}
+      const [how, ...why] = said.split(" ");
+      ok(msg.id, { how, why: why.join(" "), ended: [] });
     } else if (msg.method === "iskron/end") {
       // The plugin ends a lead child's run before its stop (js/bridge/runend.ts);
       // FB_END_FAILED — places the bridge could not revoke (comma-separated).

@@ -27,7 +27,7 @@ import {
   turn,
   turnWords,
 } from "./lead-kit.mjs";
-import { delay, plugin, SANDBOX, stopMarks, until } from "./opencode-kit.mjs";
+import { delay, lostMarkers, plugin, SANDBOX, stopMarks, until } from "./opencode-kit.mjs";
 
 /** The seat is off — the word the launcher's own revoke answers too (leads.ts, release.ts). */
 const OFF = /место снято на платформе/;
@@ -52,17 +52,19 @@ function noBridgeForTheChild(b, from) {
   return pidsIn(lines);
 }
 
-/** The one call that takes the seat off — the launcher's bridge, the plugin's own move. */
+/**
+ * The one move that takes the seat off — the launcher's bridge, the plugin's own move: the stop
+ * by the child's own socket's token, named by its seat key (#7621) — never a revoke by name.
+ */
 function oneRevoke(went, roots) {
-  const all = went.filter((c) => c.name === "iskron_channel");
-  assert.equal(all.length, 1, `one call by the launcher's bridge: ${JSON.stringify(all)}`);
+  const byName = went.filter(
+    (c) => c.name === "iskron_channel" && c.arguments?.action === "revoke",
+  );
+  assert.deepEqual(byName, [], "no revoke by name");
+  const all = went.filter((c) => c.name === "iskron/stopseat");
+  assert.equal(all.length, 1, `one stop by the launcher's bridge: ${JSON.stringify(all)}`);
   const [call] = all;
-  assert.deepEqual(call.arguments, {
-    action: "revoke",
-    standing: SUB,
-    realm: "@nks/nks-dev",
-    karta: "931",
-  });
+  assert.deepEqual(call.arguments, { key: "k-sub" }, "the child's own seat key");
   assert.match(String(call.id), /^iskron-service-/, "the plugin's own move, not agent work");
   assert.ok(roots.includes(call.pid), "spoken by a bridge raised for the root, not a satellite");
   return call;
@@ -171,21 +173,23 @@ test("a pending leave ended after the reload takes the child's satellite seat of
 // №1237 (3), the seat: the child ended while the plugin was down — the end record lies next
 // to the grant, and the end had spoken before the reload. The next instance raises no bridge
 // for it and does not end it again: only its satellite seat is taken off — by the launcher's
-// bridge — and the parent hears that one word, unwoken. Off, or already gone — «место снято»;
-// any other refusal of the platform — the loud «НЕ снято» with its reason, never «отпущен».
-// The fake's start log keeps its lines across tests: each case takes a name of its own, or
-// the first pid read off the log would be a bridge of an earlier case.
+// bridge, by the child's own socket's token — and the parent hears that one word, unwoken.
+// Stopped — «место снято»; the token no longer current (another holder took the name) — the
+// other's seat is left alone, and the word says so; any other answer — the loud «НЕ снято»
+// with its reason, never «отпущен». The fake's start log keeps its lines across tests: each
+// case takes a name of its own, or the first pid read off the log would be a bridge of an
+// earlier case.
 for (const [n, [what, answer, word]] of [
-  ["taken off", "", OFF],
+  ["taken off", "stopped", OFF],
   [
-    "already gone (404 standing_not_found) and so off",
-    "__REFUSAL__404 standing_not_found места на доске нет",
-    OFF,
+    "held by another now (the token not current) and left alone",
+    "moved 404 ws_token_not_current",
+    /имя держит другой держатель, его место не тронуто/,
   ],
   [
-    "NOT taken off — the loud word carries the platform's reason",
-    "__REFUSAL__403 standing_held место держит другой процесс",
-    /место НЕ снято — платформа ответила: место держит другой процесс\. /,
+    "NOT taken off — the loud word carries the reason",
+    "unknown 503 сервер недоступен",
+    /место НЕ снято — платформа ответила: 503 сервер недоступен\. /,
   ],
 ].entries()) {
   const name = `seatoff-ended-${n}`;
@@ -194,8 +198,8 @@ for (const [n, [what, answer, word]] of [
     writeFileSync(calls, "");
     const { b, rec } = await leadChild(name, { FB_CALLS: calls });
     const mark = endMark("child");
-    // The platform's answer to the launcher's revoke — that call alone; the rest answer as before.
-    const platform = `${b.reply}.iskron_channel`;
+    // The launcher's bridge's answer to the stop — that move alone; the rest answer as before.
+    const platform = `${b.reply}.stopseat`;
     try {
       rec.emit({
         type: "session.text.ended",
@@ -287,8 +291,12 @@ test("a child that stands again while its deferred revoke waits for the launcher
     await delay(5000); // past the late lookup: the revoke would have gone by now
     const revokes = callsIn(calls)
       .slice(sent)
-      .filter((c) => c.name === "iskron_channel" && c.arguments?.action === "revoke");
-    assert.deepEqual(revokes, [], "the child's new seat is not revoked");
+      .filter(
+        (c) =>
+          c.name === "iskron/stopseat" ||
+          (c.name === "iskron_channel" && c.arguments?.action === "revoke"),
+      );
+    assert.deepEqual(revokes, [], "the child's new seat is neither stopped nor revoked");
     assert.ok(
       !second.synthetics.some((s) => OFF.test(s.text) || NOT_OFF.test(s.text)),
       `no word about a seat taken off: ${JSON.stringify(second.synthetics)}`,
@@ -299,9 +307,64 @@ test("a child that stands again while its deferred revoke waits for the launcher
   }
 });
 
-// The child stood on another role than its parent (#1172 under a root on #931): the revoke after
-// its end names the child's own seat — its role and name — never the launcher's role.
-test("a child on another role than its parent: the revoke after its end names the child's own seat", async () => {
+/** A child that ended while the plugin was down; `marker` — rewrites the marker before the reload. */
+async function endedChild(name, own = SUB_PLACE, marker = null) {
+  const calls = join(SANDBOX, `${name}.calls`);
+  writeFileSync(calls, "");
+  const { b, rec } = await leadChild(name, { FB_CALLS: calls }, undefined, own);
+  const mark = endMark("child");
+  try {
+    rec.emit({
+      type: "session.text.ended",
+      data: { sessionID: "child", ordinal: 0, text: "EN-голова закреплена" },
+    });
+    await delay(150);
+  } finally {
+    await rec.stop();
+  }
+  writeFileSync(mark, JSON.stringify({ session: "child", at: new Date().toISOString() }), {
+    mode: 0o600,
+  });
+  if (marker)
+    for (const f of lostMarkers())
+      writeFileSync(f, JSON.stringify(marker(JSON.parse(readFileSync(f, "utf8")))));
+  const sent = callsIn(calls).length;
+  const second = await plugin(
+    { ...b.env, FB_RESUME: rootBack(name) },
+    { keepMarker: true, sessions: SESSIONS },
+  );
+  await until(() => second.tools().has("iskron_case"), "the tools", 8000);
+  return { second, mark, went: () => callsIn(calls).slice(sent) };
+}
+
+// An older build's marker names no seat key: the stop record cannot be found — no stop, and no
+// revoke by name either: the seat lapses by its term, and the parent is told so.
+test("an older marker without the child's key: no stop and no revoke by name — the seat lapses by its term", async () => {
+  const { second, mark, went } = await endedChild("seatoff-nokey", SUB_PLACE, (m) => ({
+    ...m,
+    entries: m.entries.map((e) => (e.child ? { ...e, key: null } : e)),
+  }));
+  try {
+    await until(
+      () => second.synthetics.some((s) => /уйдёт по сроку канала/.test(s.text)),
+      "the word that the seat lapses by its term",
+      8000,
+    );
+    const moves = went().filter(
+      (c) =>
+        c.name === "iskron/stopseat" ||
+        (c.name === "iskron_channel" && c.arguments?.action === "revoke"),
+    );
+    assert.deepEqual(moves, [], "nothing stopped, nothing revoked by name");
+  } finally {
+    await second.stop();
+    rmSync(mark, { force: true });
+  }
+});
+
+// The child stood on another role than its parent (#1172 under a root on #931): its seat goes by
+// its own socket's token, named by its own seat key — no revoke under the launcher's role.
+test("a child on another role than its parent: its own seat is stopped by its key, never revoked by the launcher's role", async () => {
   const name = "seatoff-own-role";
   const calls = join(SANDBOX, `${name}.calls`);
   writeFileSync(calls, "");
@@ -328,13 +391,16 @@ test("a child on another role than its parent: the revoke after its end names th
   try {
     await until(() => second.tools().has("iskron_case"), "the tools", 8000);
     await until(() => second.synthetics.some((s) => OFF.test(s.text)), "the seat's word", 8000);
-    const revokes = callsIn(calls)
-      .slice(sent)
-      .filter((c) => c.name === "iskron_channel" && c.arguments?.action === "revoke");
+    const went = callsIn(calls).slice(sent);
     assert.deepEqual(
-      revokes.map((c) => c.arguments),
-      [{ action: "revoke", standing: SUB, realm: "@nks/nks-dev", karta: "1172" }],
-      "the child's own role, not the launcher's #931",
+      went.filter((c) => c.name === "iskron/stopseat").map((c) => c.arguments),
+      [{ key: "k-sub" }],
+      "the child's own seat, by its key",
+    );
+    assert.deepEqual(
+      went.filter((c) => c.name === "iskron_channel" && c.arguments?.action === "revoke"),
+      [],
+      "no revoke under the launcher's role",
     );
   } finally {
     await second.stop();

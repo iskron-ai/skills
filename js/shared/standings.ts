@@ -71,6 +71,13 @@ export function privateDirProblem(dir: string, create = true): string | null {
 export const keyFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.key`);
 
+/**
+ * A satellite's stop record (0600): its socket's address, the token its deferred end stops by
+ * (graph @nks/nks-dev, node #7621) — a satellite keeps no hold record (bridge stopseat.ts).
+ */
+export const stopFilePathOf = (authDir: string, key: string): string =>
+  join(standingsDirOf(authDir), `${hashOf(key)}.stop`);
+
 /** Hold record lifetime: the idle time the platform grants a socketless place. */
 export const HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 

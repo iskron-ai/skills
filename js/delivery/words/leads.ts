@@ -25,6 +25,10 @@ export interface LeadWords {
   release: (who: string) => string;
   /** why — ответ платформы на revoke запустившего. */
   unreleased: (who: string, why: string) => string;
+  /** Отложенный конец: токен сокета ребёнка уже не текущий — имя держит другой, его место не тронуто. */
+  heldByOther: (who: string) => string;
+  /** Отложенный конец: токена сокета ребёнка нет (запись прежней сборки) — место уйдёт по сроку. */
+  noStopToken: (who: string) => string;
   /** Ход ведущего упал (#9046); why — ошибка хода. */
   failed: (who: string, why: string) => string;
   noError: () => string;
@@ -105,6 +109,10 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     unreleased: (who, why) =>
       `Искрон: субагент ${who} кончен и его мост погашен, но место НЕ снято — платформа ответила: ${why}. ` +
       `Оно висит на доске: повтори iskron_channel(action="revoke", standing="${who}", karta) или скажи человеку.`,
+    heldByOther: (who) =>
+      `Искрон: субагент ${who} кончен и его мост погашен; его места на платформе уже нет — имя держит другой держатель, его место не тронуто.`,
+    noStopToken: (who) =>
+      `Искрон: субагент ${who} кончен и его мост погашен; токен его сокета мосту не известен (запись прежней сборки) — место не снимается по имени и уйдёт по сроку канала.`,
     failed: (who, why) =>
       `Искрон: ход субагента ${who} упал — ${why}. Он не кончен: место и дела держит, кадры его дела будят его, ` +
       "но пока ход падает, исполнить поручение он не может. Ошибка поставщика модели (вход, лимит) — скажи человеку; " +
@@ -199,6 +207,10 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     unreleased: (who, why) =>
       `Iskron: subagent ${who} has ended and its bridge is down, but its seat is NOT revoked — the platform answered: ${why}. ` +
       `It hangs on the board: repeat iskron_channel(action="revoke", standing="${who}", karta) or tell the human.`,
+    heldByOther: (who) =>
+      `Iskron: subagent ${who} has ended and its bridge is down; its seat is gone from the platform — another holder holds the name now, and its seat is left alone.`,
+    noStopToken: (who) =>
+      `Iskron: subagent ${who} has ended and its bridge is down; its socket's token is not known to the bridge (an older build's record) — the seat is not revoked by name and lapses by the channel's term.`,
     failed: (who, why) =>
       `Iskron: the turn of subagent ${who} failed — ${why}. It has not ended: it holds its seat and cases, frames of its case wake it, ` +
       "but while its turns fail it cannot carry out the errand. A model provider's error (sign-in, limit) — tell the human; " +

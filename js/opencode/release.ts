@@ -10,10 +10,11 @@
 // not a quiet "released".
 // The bridge that speaks is chosen here too (launcherRevokes): the launcher's own revoke out of
 // its tool call (tools.ts), and a lead that ended with no bridge of its own — its satellite seat
-// is taken off by the same bridge, as the plugin's own move (leads.ts).
+// is stopped by the same bridge by the child's own socket's token, as the plugin's own move
+// (leads.ts, bridge stopseat.ts, #7621): never a revoke by name.
 import { refusalOf, seatAlreadyOff } from "../bridge/refusal.ts";
 import type { JsonRpcMessage } from "../bridge/types.ts";
-import { tool } from "../delivery/index.ts";
+import { method, PRODUCT } from "../delivery/index.ts";
 import type { Released } from "./leaddoors.ts";
 import { W } from "./leadwords.ts";
 import { type Place } from "./satellite.ts";
@@ -31,6 +32,9 @@ const seatGone = (e: unknown): boolean =>
  * The refusal's first line without the calls it suggests: the platform may list the role's
  * other seats with a revoke for each — the launcher's own seat among them (#7599).
  */
+/** The deferred stop's answer — no longer than this. */
+const STOP_MS = 10_000;
+
 const reason = (message: string): string =>
   (message.split("\n").find((s) => s.trim()) ?? "").replace(/\b\w+\([^()]*\)/g, "…").trim();
 
@@ -136,19 +140,35 @@ export function launcherRevokes(d: Doors) {
      * right before the revoke leaves: the child stood again while its launcher was being found —
      * the seat is its own now, nothing is revoked and nothing is said (null).
      */
-    async off(child: string, place: Place, taken: string, still: () => boolean) {
-      let stoodAgain = false;
-      const word = await revokeAsLauncher(
-        { word: taken, place, off: false },
-        { action: "revoke", standing: place.name },
-        async (args) => {
-          const root = await d.rootOf(child);
-          const slot = await launcherSlot(root);
-          if (!still()) return void (stoodAgain = true);
-          return byLauncher(Promise.resolve(slot), tool("channel"), args, root, true);
-        },
-      ).catch((e) => String((e as Error)?.message ?? e));
-      return stoodAgain ? null : word;
+    async off(
+      child: string,
+      place: Place,
+      taken: string,
+      still: () => boolean,
+      key: string | null,
+    ): Promise<string | null> {
+      // By the child's own socket's token (bridge stopseat.ts, #7621): it ends only seats that
+      // socket still holds — a holder who re-took the name meanwhile keeps its seat. No token
+      // known (an older marker) — no revoke by name: the seat lapses by its term.
+      if (!key) {
+        process.stderr.write(`[${PRODUCT}] ${W().noStopToken(place.name)}\n`);
+        return W().noStopToken(place.name);
+      }
+      try {
+        const root = await d.rootOf(child);
+        const slot = await launcherSlot(root);
+        if (!still()) return null;
+        slot.busy++;
+        const got = (await slot.bridge
+          .request(method("stopseat"), { key }, { service: true, timeoutMs: STOP_MS })
+          .finally(() => slot.busy--)) as { how?: string; why?: string } | null;
+        if (got?.how === "stopped") return taken;
+        if (got?.how === "moved") return W().heldByOther(place.name);
+        if (got?.how === "none") return W().noStopToken(place.name);
+        return W().unreleased(place.name, reason(String(got?.why ?? got?.how ?? "")));
+      } catch (e) {
+        return W().unreleased(place.name, reason(String((e as Error)?.message ?? e)));
+      }
     },
   };
 }
