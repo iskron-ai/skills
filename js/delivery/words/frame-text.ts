@@ -62,8 +62,8 @@ function clockNotice(
   const facts =
     kind === "line_due"
       ? `${ru ? "срок" : "due"}: ${f.due ?? unknown}; ${ru ? "передано постановщику" : "escalated"}: ${flag(f.escalated)}`
-      : person
-        ? `${delivered(ru, unknown, f.delivery)}; ${last}`
+      : person // the agent-seat facts (took_text, listening, role_called, last_act_at) — not for a person
+        ? delivered(ru, unknown, f.delivery)
         : `${ru ? "слушает" : "listening"}: ${flag(f.listening)}; ${last}; ${ru ? "роль позвана" : "role called"}: ${flag(f.roleCalled)}`;
   return `${head}: ${ref}; ${who}; ${facts}`;
 }

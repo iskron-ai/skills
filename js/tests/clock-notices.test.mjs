@@ -45,10 +45,17 @@ test("an agent role with no seat: the recipient unknown, the seat facts and role
 });
 
 // The api's shape (nks-api, #11372): to.kind "person" | "agent"; for a person delivery =
-// {fronts: [{front, taken}], read: "unknown"}; the agent-seat fields stay in the frame and are
-// not printed for a person.
+// {fronts: [{front, taken}], read: "unknown"}; the agent-seat fields (took_text, listening,
+// role_called, last_act_at — nks-api #1147) stay in the frame and none is printed for a person.
 const PERSON = { standing_id: null, standing: null, karta_seq: 163, kind: "person" };
-const SEAT_FIELDS = { took_text: false, listening: false, role_called: false };
+const SEAT_FIELDS = {
+  took_text: false,
+  listening: false,
+  role_called: false,
+  last_act_at: "2026-11-10T12:00:00Z",
+};
+const SEAT_WORDS =
+  /слушает|роль позвана|последний ход|2026-11-10T12:00:00Z|адресат|took_text|: нет/;
 
 test("a person card with taken and queued fronts: person wording, each front's state, the server's read word, no agent-seat fact", () => {
   const delivery = {
@@ -58,20 +65,15 @@ test("a person card with taken and queued fronts: person wording, each front's s
     ],
     read: "unknown",
   };
-  const f = clockNotice("card_unanswered", {
-    to: PERSON,
-    delivery,
-    last_act_at: null,
-    ...SEAT_FIELDS,
-  });
+  const f = clockNotice("card_unanswered", { to: PERSON, delivery, ...SEAT_FIELDS });
   for (const text of [frameToText(f, ""), batchLine(f), batchText([f])]) {
     const line = text.split("\n")[0];
     assert.match(
       line,
-      /; человеку \(роль: 163\); фронты: bot \(взята\), pulse \(в очереди\); прочтение: unknown; последний ход: неизвестно$/,
+      /; человеку \(роль: 163\); фронты: bot \(взята\), pulse \(в очереди\); прочтение: unknown$/,
       line,
     );
-    assert.doesNotMatch(line, /слушает|роль позвана|адресат|took_text|: нет/, line);
+    assert.doesNotMatch(line, SEAT_WORDS, line);
     assert.doesNotMatch(text, /SERVER-BODY|notice_data|\[object Object\]/);
   }
   // The details carry the server's words, not the bridge's.
@@ -88,11 +90,12 @@ test("a person card sent to no front, and one without delivery facts", () => {
   });
   assert.match(
     batchLine(none),
-    /; человеку \(роль: 163\); не отправлена ни одному фронту человека; прочтение: unknown; /,
+    /; человеку \(роль: 163\); не отправлена ни одному фронту человека; прочтение: unknown$/,
   );
-  assert.doesNotMatch(batchLine(none), /слушает|роль позвана/);
+  assert.doesNotMatch(batchLine(none), SEAT_WORDS);
   const bare = batchLine(clockNotice("card_unanswered", { to: PERSON, ...SEAT_FIELDS }));
-  assert.match(bare, /; человеку \(роль: 163\); доставка: неизвестно; /, bare);
+  assert.match(bare, /; человеку \(роль: 163\); доставка: неизвестно$/, bare);
+  assert.doesNotMatch(bare, SEAT_WORDS, bare);
 });
 
 test("kind agent: the seat facts as before, an absent one unknown", () => {
@@ -140,14 +143,14 @@ test("English: a person card by the server's kind names the person; a seatless r
         read: "unknown",
       },
       listening: false,
-      last_act_at: null,
+      last_act_at: "2026-11-10T12:00:00Z",
       role_called: false,
     });
     assert.match(
       batchLine(f),
-      /; to a person \(role: 163\); fronts: bot \(taken\), pulse \(queued\); read: unknown; last action: unknown$/,
+      /; to a person \(role: 163\); fronts: bot \(taken\), pulse \(queued\); read: unknown$/,
     );
-    assert.doesNotMatch(batchLine(f), /listening|role called|recipient/);
+    assert.doesNotMatch(batchLine(f), /listening|role called|recipient|last action|12:00:00/);
     const none = batchLine(
       clockNotice("card_unanswered", {
         to: { ...to, kind: "person" },
@@ -156,7 +159,7 @@ test("English: a person card by the server's kind names the person; a seatless r
     );
     assert.match(
       none,
-      /; to a person \(role: 163\); sent to no front of the person; read: unknown; /,
+      /; to a person \(role: 163\); sent to no front of the person; read: unknown$/,
     );
     const seatless = batchLine(clockNotice("card_unanswered", { to }));
     assert.match(

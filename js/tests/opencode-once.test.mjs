@@ -262,15 +262,12 @@ for (const [n, flags] of [
         clockNotice("card_unanswered", {
           to: { standing_id: null, standing: null, karta_seq: 163, kind: "person" },
           delivery: { fronts: [{ front: "bot", taken: true }], read: "unknown" },
-          last_act_at: null,
+          last_act_at: "2026-11-10T12:00:00Z",
           ...flags,
         }),
       );
-      assert.match(
-        text,
-        /человеку \(роль: 163\); фронты: bot \(взята\); прочтение: unknown; последний ход: неизвестно/,
-      );
-      assert.doesNotMatch(text, /слушает|роль позвана|адресат: /, text);
+      assert.match(text, /человеку \(роль: 163\); фронты: bot \(взята\); прочтение: unknown/);
+      assert.doesNotMatch(text, /слушает|роль позвана|последний ход|12:00:00|адресат: /, text);
       for (const fact of ["4330", "[41]", "clock-key"])
         assert.ok(text.includes(fact), `${fact} missing: ${text}`);
       assert.doesNotMatch(text, /SERVER-BODY|notice_data|\[object Object\]/);
