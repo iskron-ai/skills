@@ -7,8 +7,8 @@
 // say, answer, talk; channel send) is the word laid; the turn's text is its session.text.ended
 // after the last call. At the
 // turn's end — session.execution.succeeded, or the deprecated session.idle — a frame's turn that
-// lost its word gets the wake word in the service's log, once; the plugin opens no turn of its
-// own (#11359).
+// lost its word gets the wake word in the service's log and the session's next completed tool
+// reply, once; the plugin opens no turn of its own (#11359, replynotes.ts).
 /* eslint-disable @typescript-eslint/no-explicit-any -- SDK events without a schema */
 import { TURN } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
@@ -16,6 +16,7 @@ import { quiet } from "../shared/quietframe.ts";
 import { lostWord, marked, speaks, type TurnSeen } from "../shared/turnend.ts";
 import { createInboxBook } from "./inbox.ts";
 import type { Context } from "./plugin.ts";
+import { putNote } from "./replynotes.ts";
 
 const ENDS = new Set<unknown>(["session.execution.succeeded", "session.idle"]);
 /** A turn's end that is no turn of a frame left alone: its state goes, no word. */
@@ -70,9 +71,10 @@ export function createTurnEnds(
     if (!t) return;
     if (!lostWord({ ...t, heard: heard.get(s) ?? null })) return;
     if (opts.skip(s) || !(await opts.on(s)) || opts.skip(s)) return;
-    // A turn opens only by a server frame passed as is (#11359): the word goes to the log, no
-    // prompt. Riding the next tool reply is PR #906's (replynotes.ts); here — the log only.
+    // A turn opens only by a server frame passed as is (#11359): the word goes to the log and
+    // rides the session's next completed tool reply (replynotes.ts), no prompt.
     opts.say(words(TURN).logged(s, words(TURN).wake()));
+    putNote(s, words(TURN).wake());
   }
 
   return {

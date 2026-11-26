@@ -92,6 +92,10 @@ test("a frame's turn ending with the agent's words left in the console: the word
     assert.match(w[0], /ask/);
     assert.match(w[0], /iskron_case line/);
     assert.match(w[0], /say с to/);
+    // It rides the session's next completed tool reply (replynotes.ts), once.
+    const rode = rec.told(["s-t"]).filter((n) => n.sessionID === "s-t" && WAKE.test(n.text));
+    assert.equal(rode.length, 1, `the word in the next tool reply: ${JSON.stringify(rec.notes)}`);
+    assert.equal(rec.told(["s-t"]).filter((n) => WAKE.test(n.text)).length, 1, "only once");
     await turn(rec, "s-t", { text: "всё ещё в консоль?" });
     assert.equal(wakes(rec, "s-t").length, 1, "a turn no frame started gets none");
     emit(rec, "session.idle", "s-t");
