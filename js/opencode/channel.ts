@@ -98,7 +98,7 @@ export function setupChannel(
     (id, message, kept) => say(W.haltUnlifted(id, message, kept), "warning"),
   );
   const ends = channelEnds(authDir, say);
-  const holds = createHolds(ctx, say, W, deliver);
+  const holds = createHolds(ctx, say, W);
 
   // Every delivery is a log line with the address and the frame, a refusal is loud (#4355).
   async function deliver(

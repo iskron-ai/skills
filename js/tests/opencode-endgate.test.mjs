@@ -186,6 +186,42 @@ test("unknown, then live: the held words go once each, a direct word steering an
   }
 });
 
+// Review №5823 round 2, п.2: a word held while unknown and laid once the host calls the session
+// live goes by its caller's own delivery — its inbox receipt reaches the caller, so an attention
+// tact after it folds behind the one still in the queue. On the former build the hold laid it on
+// its own: the receipt was lost and the next tact went as a second prompt.
+const tactBurst = (n) => {
+  const f = {
+    type: "message",
+    id: `tact-${n}`,
+    origin: "platform",
+    provenance: { via: "platform", wake: "look_up" },
+    body: `Час на «вахта ${n}» — подними голову`,
+  };
+  return event("backlog", { frames: [f], marks: [f.id], text: `Побудка: кадров 1\n\n${f.body}` });
+};
+
+test("unknown, then live: the held tact's receipt reaches the tacts — the next tact folds, one prompt", async () => {
+  const faults = { getFails: 1000 };
+  const { rec, events } = await seated(
+    "gate-unknown-fold",
+    { sessions: [{ id: "s", time: { updated: 1 } }], faults, inboxIds: true },
+    { ISKRON_OPENCODE_HOLD_MS: 150 },
+  );
+  try {
+    appendFileSync(events, tactBurst(1));
+    await until(() => /сессия s — неизвестно, жива ли/.test(rec.said()), "the tact held");
+    faults.getFails = 0;
+    await until(() => rec.prompts.length === 1, "the held tact delivered", 8000);
+    appendFileSync(events, tactBurst(2)); // the first is still in the queue, not taken
+    await delay(700);
+    assert.equal(rec.prompts.length, 1, `the second tact folds behind the first:\n${rec.said()}`);
+    assert.match(rec.prompts[0].text, /вахта 1/);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("unknown, then ended: the held words are never delivered — the session's next event asks the host again", async () => {
   const faults = { getFails: 1000 };
   const gone = new Set();
