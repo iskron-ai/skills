@@ -84,6 +84,27 @@ test("a stale replay of given records and of an older one wakes nothing", async 
   });
 });
 
+// The batch is the server's frames grouped by case, no head of the bridge's own (#11359).
+test("a whole stale batch and a whole wake-up batch carry no head of the bridge's own", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const { s, channel_id } = await seat(fake, mux, session, "no-head");
+    const platform = { provenance: { via: "platform" }, type: "message", channel_id };
+    mux.push({ ...platform, id: "old-1", body: "ЛЕЖАЛОЕ-ТЕЛО", stale: true });
+    await waitFor("the stale batch", () => events(s).find((e) => e.kind === "stale"), 5000);
+    mux.push({ ...platform, id: "wake-1", body: "ПОБУДКА-ТЕЛО" });
+    await waitFor("the wake batch", () => events(s).find((e) => e.kind === "backlog"), 5000);
+    for (const kind of ["stale", "backlog"]) {
+      const { text } = events(s).find((e) => e.kind === kind);
+      assert.doesNotMatch(text, /Лежалых кадров|Побудка: кадров|Stale frames|Wake-up:/, text);
+      assert.match(
+        text,
+        kind === "stale" ? /^[^\n]*\nЛЕЖАЛОЕ-ТЕЛО/ : /^[^\n]*\nПОБУДКА-ТЕЛО/,
+        text,
+      );
+    }
+  });
+});
+
 test("a repeated card (repeat: true) still comes, and a text record is not taken for a count", async () => {
   await withMux(async ({ fake, mux, session }) => {
     const { s, channel_id } = await seat(fake, mux, session, "once-card");
