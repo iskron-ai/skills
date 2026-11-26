@@ -3,11 +3,17 @@ import { type ChannelEvent } from "../bridge/hold.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { askFromPerson } from "../shared/asks.ts";
 import { classifyOrigin, type Frame, isDirectWord } from "../shared/channel.ts";
-import { batchShown, batchText, countsWithShown, frameToText } from "../shared/frame-text.ts";
+import {
+  batchShown,
+  batchText,
+  caseKey,
+  countsWithShown,
+  frameToText,
+} from "../shared/frame-text.ts";
 import { isGraphInbox } from "../shared/graph-inbox.ts";
 import { receiptGraph } from "../shared/graph-receipt.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
-import { eventIn, eventKeyOf, splitBatch } from "../shared/seen.ts";
+import { eventIn, eventKeyOf, isLifeCheck, isTact, splitBatch } from "../shared/seen.ts";
 import { batchBodyText, ridesIn } from "../shared/stalebatch.ts";
 
 /** Addressing precedes stack; graph inbox text waits for next-turn context. */
@@ -24,6 +30,29 @@ export function toPile(frame: Frame | null): boolean {
     return false;
   return !addressedToMine(frame) || stackOf(frame) === "batch";
 }
+
+/**
+ * A stale or wake-up batch of counts only wakes no turn (#6574): its frames go to the case
+ * pile (`put`), to wait for a passing prompt as live counts do; true — taken.
+ */
+export function pileCounts(frames: Frame[] | null | undefined, put: (f: Frame) => void): boolean {
+  if (!countsOnly(frames)) return false;
+  for (const f of frames ?? []) put(f);
+  return true;
+}
+
+/** A batch of case records none of which is to the seat. */
+const countsOnly = (frames: readonly Frame[] | null | undefined): boolean =>
+  !!frames?.length &&
+  frames.every(
+    (f) =>
+      f?.type === "message" &&
+      !!caseKey(f) &&
+      !addressedToMine(f) &&
+      !isDirectWord(f) &&
+      !isTact(f) &&
+      !isLifeCheck(f),
+  );
 
 interface Riders {
   riders: Frame[];

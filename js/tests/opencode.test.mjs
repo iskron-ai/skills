@@ -9591,7 +9591,7 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     await quiet(answer(96, 95, BORIS));
     await quiet(askWithdrawn(98, 95)); // a question to another withdrawn
     // …withdrawn by a person's place (window, bot): still a count, not a person's word.
-    const byPerson = askWithdrawn(96, 95);
+    const byPerson = askWithdrawn(94, 95); // its own record: one entry number is one record
     byPerson.provenance = { ...byPerson.provenance, user_karta_seq: 48 };
     await quiet(byPerson);
     const a = await send(answer(91, 90, ME, { choice: "later" }), 2);

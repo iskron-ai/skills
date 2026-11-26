@@ -27,6 +27,7 @@ import {
   freshRiders,
   handRiders,
   type Pile,
+  pileCounts,
   ridersInBatch,
   rideWith,
   takeRiders,
@@ -261,12 +262,13 @@ export function setupChannel(
   function batch(session: string | null, child: boolean, ev: ChannelEvent, what: string): void {
     const parts = separateGraphBatch(ev);
     for (const frame of parts.graph) pile(session, child, frame);
+    const lead = launcherWordIn(session, child, parts.rest.frames);
+    if (!lead && pileCounts(parts.rest.frames, (f) => pile(session, child, f))) return;
     const own = piles.get(`${child ? "child" : "root"}:${session ?? ""}`);
     noteOwn(own, parts.rest.marks);
     if (!parts.rest.text) return;
     const b = { ...parts.rest, text: ridersInBatch(own, parts.rest) };
-    if (launcherWordIn(session, child, b.frames))
-      void deliver(session, b.text, what, "steer", child);
+    if (lead) void deliver(session, b.text, what, "steer", child);
     else if (!tact(session, child, b, what)) void deliver(session, b.text, what, "queue", child);
   }
 
@@ -456,9 +458,7 @@ export function setupChannel(
           return;
         case "resumed":
           // The bridge returned the seat itself (#5366): the taken name goes into the session.
-          if (ev.text) {
-            say(ev.text, "warning");
-          }
+          if (ev.text) say(ev.text, "warning");
           return;
         case "return_failed": // a return that did not happen: a word to act on (#5140)
         case "seat_result":
