@@ -1,8 +1,10 @@
 // Behavioural probe for the turn's end on a watch in the OpenCode plugin (turnend.ts, graph
-// @nks/nks-dev, node #9342): a turn a frame of the channel started, with no human word, that
-// ended with text and no ask, say or send, gets one wake word queued into the session; the turn
-// that word wakes does not get it again; a turn that spoke, a human's turn and a child's turn get
-// none. Fake bridge, stand-in context (opencode-kit.mjs); ISKRON_OPENCODE_PLUGIN aims it at any copy.
+// @nks/nks-dev, nodes #9342, #11359): a turn a frame of the channel started, with no human word,
+// that ended with text and no ask, say or send, gets one wake word — in the service's log: the
+// plugin opens no turn of its own (a turn opens only by a server frame passed as is), so nothing
+// is prompted or queued; a turn that spoke, a human's turn and a child's turn get none. On the
+// former build the word was queued into the session. Fake bridge, stand-in context
+// (opencode-kit.mjs); ISKRON_OPENCODE_PLUGIN aims it at any copy.
 import assert from "node:assert/strict";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -66,28 +68,43 @@ async function turn(
   emit(rec, end, s);
   await delay(150);
 }
-const wakes = (rec, s) => rec.prompts.filter((p) => p.sessionID === s && WAKE.test(p.text));
+/** The wake word of session `s` in the service's log; none may be prompted (noTurn). */
+const wakes = (rec, s) =>
+  rec.said().match(new RegExp(`слово конца хода сессии ${s} — в журнал[^\\n]*`, "g")) ?? [];
+const noTurn = (rec) =>
+  assert.deepEqual(
+    rec.prompts.filter((p) => WAKE.test(p.text)),
+    [],
+    "the plugin opens no turn of its own: nothing prompted, nothing queued",
+  );
 
-test("a frame's turn ending with text and no word laid: one wake word, none for the turn it wakes", async () => {
+test("a frame's turn ending with the agent's words left in the console: the word to the log, no prompt, no queue", async () => {
   const { rec, say } = await seated("turn-lost", "s-t");
   try {
     await say("вопрос владельцу");
+    const n = rec.prompts.length;
     await turn(rec, "s-t");
+    noTurn(rec);
+    assert.equal(rec.prompts.length, n, "nothing after the turn's end");
+    assert.equal(rec.synthetics.length, 0, "no synthetic either");
     const w = wakes(rec, "s-t");
-    assert.equal(w.length, 1, JSON.stringify(rec.prompts));
-    assert.equal(w[0].marked, true, "under the delivery's mark");
-    assert.equal(w[0].delivery, "queue");
-    assert.match(w[0].text, /ask/);
-    assert.match(w[0].text, /iskron_case line/);
-    assert.match(w[0].text, /say с to/);
+    assert.equal(w.length, 1, rec.said());
+    assert.match(w[0], /ask/);
+    assert.match(w[0], /iskron_case line/);
+    assert.match(w[0], /say с to/);
+    // It rides the session's next completed tool reply (replynotes.ts), once.
+    const rode = rec.told(["s-t"]).filter((n) => n.sessionID === "s-t" && WAKE.test(n.text));
+    assert.equal(rode.length, 1, `the word in the next tool reply: ${JSON.stringify(rec.notes)}`);
+    assert.equal(rec.told(["s-t"]).filter((n) => WAKE.test(n.text)).length, 1, "only once");
     await turn(rec, "s-t", { text: "всё ещё в консоль?" });
-    assert.equal(wakes(rec, "s-t").length, 1, "the woken turn is not woken again");
+    assert.equal(wakes(rec, "s-t").length, 1, "a turn no frame started gets none");
     emit(rec, "session.idle", "s-t");
     await delay(100);
     assert.equal(wakes(rec, "s-t").length, 1, "the deprecated idle after the end adds none");
     await say("ещё кадр");
     await turn(rec, "s-t");
     assert.equal(wakes(rec, "s-t").length, 2, "the next frame's turn is judged afresh");
+    noTurn(rec);
   } finally {
     await rec.stop();
   }
@@ -132,28 +149,22 @@ test("a frame taken before its prompt's answer named the item is still the turn'
   }
 });
 
-test("the turn the wake word's own item starts is exempt, not the next one: a waiting frame is woken", async () => {
+test("each frame's turn is judged by its own inbox item: a waiting frame's turn gets its word too, none is prompted", async () => {
   const { rec, say } = await seated("turn-own", "s-o", { inboxIds: true });
-  const idOf = (p) => `inbox-${rec.prompts.indexOf(p) + 1}`;
   try {
     emit(rec, "session.execution.started", "s-o");
     await say("кадр A");
     emit(rec, "session.inbox.delivered", "s-o", { inboxID: "inbox-1" });
-    await say("кадр B"); // queued behind A's turn, before the wake word
+    await say("кадр B"); // queued behind A's turn
     emit(rec, "session.text.ended", "s-o", { text: "A в консоль?" });
     emit(rec, "session.execution.succeeded", "s-o");
     await delay(150);
-    const [first] = wakes(rec, "s-o");
-    assert.ok(first, "A's turn is woken");
+    assert.equal(wakes(rec, "s-o").length, 1, "A's turn");
     await turn(rec, "s-o", { take: ["inbox-2"], text: "B в консоль?" });
-    const w = wakes(rec, "s-o");
-    assert.equal(w.length, 2, "B's turn, taken before the wake word, is judged and woken");
-    await say("кадр C");
-    const c = `inbox-${rec.prompts.length}`;
-    await turn(rec, "s-o", { take: [idOf(first), c], text: "всё ещё в консоль?" });
-    assert.equal(wakes(rec, "s-o").length, 2, "the turn A's wake word started is exempt");
-    await turn(rec, "s-o", { take: [idOf(w[1])], text: "и снова?" });
-    assert.equal(wakes(rec, "s-o").length, 2, "B's wake word's turn wakes none");
+    assert.equal(wakes(rec, "s-o").length, 2, "B's turn, taken later, is judged too");
+    await turn(rec, "s-o", { text: "и снова?" });
+    assert.equal(wakes(rec, "s-o").length, 2, "a turn no frame's item started gets none");
+    noTurn(rec);
   } finally {
     await rec.stop();
   }

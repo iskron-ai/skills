@@ -16,6 +16,8 @@ export interface WatchdogWords {
   seatNotBack: (s: number, path: string) => string;
   noSocket: (path: string, s: number) => string;
   bridgeReleasedSocket: (text: string) => string;
+  /** The agent's session ended (the end gate): the watchdog leaves, opening no turn. */
+  sessionEnded: (text: string) => string;
   notWakeup: (type: string | undefined) => string;
   seenEarlier: (id: string) => string;
   unaddressed: () => string;
@@ -60,6 +62,8 @@ export const WATCHDOG: Readonly<Record<Lang, WatchdogWords>> = {
       `место не вернулось за ${s}s после смены демона — сокет ${path} не поднят; вернуть — iskron_stand`,
     noSocket: (path, s) => `мост не поднял локальный сокет ${path} за ${s}s`,
     bridgeReleasedSocket: (text) => `мост отпустил сокет: ${text}`,
+    sessionEnded: (text) =>
+      `сессия агента кончена — сторож уходит, ход больше не открывается: ${text}`,
     notWakeup: (type) => `кадр ${type ?? "не разобран"} — не повод будить`,
     seenEarlier: (id) => `кадр ${id} уже отдан прежним взводом — не повод будить`,
     unaddressed: () => "пачка без адресованных месту — счёт ждёт ближайшей побудки",
@@ -99,6 +103,8 @@ export const WATCHDOG: Readonly<Record<Lang, WatchdogWords>> = {
       `the seat did not return within ${s}s after the daemon change — socket ${path} is not up; to bring it back use iskron_stand`,
     noSocket: (path, s) => `the bridge did not bring up the local socket ${path} within ${s}s`,
     bridgeReleasedSocket: (text) => `the bridge released the socket: ${text}`,
+    sessionEnded: (text) =>
+      `the agent's session has ended — the watchdog leaves, no turn opens any more: ${text}`,
     notWakeup: (type) => `frame ${type ?? "unparsed"} — not a reason to wake`,
     seenEarlier: (id) =>
       `frame ${id} was already delivered by an earlier arming — not a reason to wake`,

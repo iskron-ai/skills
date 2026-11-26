@@ -155,14 +155,6 @@ export const besideKeyIn = (realm: unknown): string | null => extraIn(realm)?.do
 export const isParked = (realm: string, karta: string | number, name: string): boolean =>
   H.parked && isOwn(realm, karta, name);
 
-/** Since when no local listener is at any door; null if listened to or nothing is held. */
-export function listenerIdleSince(): number | null {
-  if (!H.holder?.alive) return null;
-  const ds = doors();
-  if (!ds.length || ds.some((d) => d.clients.size > 0)) return null;
-  return Math.max(...ds.map((d) => d.idleAt ?? 0));
-}
-
 /** Called when a local client attaches: the watchdog is back at the place. */
 export function onListenerAttached(fn: () => void): void {
   H.attachHooks.push(fn);
@@ -232,8 +224,8 @@ const held = (): Place | null =>
  * Release everything held: service socket, doors, publication. Idempotent.
  * `forget` also drops hold records (revoke, dead token). `keepBeside`: the same channel
  * reopens and places beside stay on it. `own`: the session's own close, revoke or leave;
- * released carries own and watchdogs leave without alarm (#6638).
- * `keepBusy`: a paused place (suspend.ts); a handed socket not taken by a successor keeps busy.
+ * released carries own and watchdogs leave without alarm (#6638); `ended` — the agent's session
+ * ended: watchdogs open no turn more. `keepBusy`: a paused place (suspend.ts).
  */
 export function releaseStanding(
   reason: string,
@@ -241,12 +233,13 @@ export function releaseStanding(
   keepBeside = false,
   own = false,
   keepBusy = false,
+  ended = false,
 ): void {
   if (forget && H.currentKey) dropOwnHoldRecord(H.currentKey, H.currentUrl);
-  if (!keepBeside) dropAllExtras(reason, forget, own);
+  if (!keepBeside) dropAllExtras(reason, forget, own, ended);
   if (!H.holder && !H.door) return;
-  // An unsent batch leaves now instead of being lost silently (backlog.ts).
-  H.door?.flushBatches();
+  // An unsent batch leaves now instead of being lost silently (backlog.ts); at the end — no one's.
+  void (ended ? H.door?.dropBatches() : H.door?.flushBatches());
   const key = H.currentKey ?? undefined;
   const handover = handoverReason();
   if (handover && !forget) {
@@ -256,7 +249,13 @@ export function releaseStanding(
     broadcast({ kind: "handover", key, text: handover });
   } else {
     standingLog(`released ${H.currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
-    const released: ChannelEvent = { kind: "released", key, text: reason, ...(own && { own }) };
+    const released: ChannelEvent = {
+      kind: "released",
+      key,
+      text: reason,
+      ...(own && { own }),
+      ...(ended && { ended }),
+    };
     broadcast(released);
     notify("info", released); // the OpenCode plugin drops holding on this word, not a guess (#5140)
   }
@@ -432,6 +431,7 @@ function openHolder(url: string, key: string): void {
       onDropped: expectHello,
       onFrame: function onFrame(raw, frame) {
         void Promise.resolve(stampOrigin(frame)).then((full) => {
+          if (full?.type === "life_check") return E.life?.(full); // the bridge answers, no turn (lifeanswer.ts)
           if (full?.type === "standing_ended") return E.stop?.(key, 0, "", full); // one seat taken off (stophold.ts)
           if (E.order?.(url, full)) return; // a stop frame is the bridge's, never the agent's (stoporder.ts)
           const primary = held();

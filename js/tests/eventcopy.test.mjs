@@ -268,6 +268,7 @@ test("pi: an inbox frame inside a backlog batch takes its case copy out of the a
     on: (name, fn) => on.set(name, fn),
     sendMessage: (m) => sent.push(unmarked(m.content)),
   });
+  await on.get("session_start")?.({}, { isIdle: () => true });
   deliver(frameEv(caseCopy()));
   deliver({
     data: { kind: "backlog", text: "пачка", frames: [inbox()], marks: deliveryKeys(inbox()) },

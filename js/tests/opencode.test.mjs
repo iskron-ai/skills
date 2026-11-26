@@ -1094,7 +1094,9 @@ test("a frame with no session seen at all is said aloud, not lost silently", asy
   }
 });
 
-test("a direct word for a session the host did not answer about still goes to that session", async () => {
+// The end gate: a session the host did not answer about is not known to be live — it may be
+// over. The frame is held: no turn opens in it, the word names the session and the frame.
+test("a direct word for a session the host did not answer about is held: no turn, a word to stderr", async () => {
   const b = bridgeEnv("unanswered");
   const faults = { getFails: 1000 };
   const rec = await plugin(b.env, {
@@ -1106,14 +1108,14 @@ test("a direct word for a session the host did not answer about still goes to th
     await rec.call("iskron_channel", { action: "connect" }, "holder");
     await delay(50);
     // The lookup fails another way than "no such session" (a storage hiccup, a session still
-    // loading): the host said no word of an end.
+    // loading): the host said no word of an end — and no word of life.
     appendFileSync(
       `${b.events}.${pidOf(b.log)}`,
       event("frame", { frame: frame("слово без ответа хоста"), raw: "" }),
     );
-    await until(() => rec.prompts.length === 1, "the direct word reaches the session");
-    assert.equal(rec.prompts[0].sessionID, "holder");
-    assert.match(rec.prompts[0].text, /слово без ответа хоста/);
+    await delay(300);
+    assert.equal(rec.prompts.length, 0, "no turn in a session not known to be live");
+    assert.match(rec.said(), /сессия holder — неизвестно, жива ли/, "the held word");
     assert.doesNotMatch(rec.said(), /закрыта или в архиве/, "an error is not read as an end");
   } finally {
     await rec.stop();
@@ -2910,6 +2912,12 @@ test("a deleted session ends its agent: the bridge is told to end before it goes
     assert.ok(
       sent.some((c) => c.name === "iskron/end" && c.pid === pid),
       `the bridge was told to end:\n${JSON.stringify(sent)}`,
+    );
+    // The end event the bridge reports by its token (#11362): the harness deleted the session.
+    assert.deepEqual(
+      sent.find((c) => c.name === "iskron/end").arguments,
+      { event: "session_deleted" },
+      "the bridge is told how the session ended",
     );
     assert.ok(!sent.some((c) => c.name === "iskron/away"), "a deletion is no absence");
     assert.equal(rec.prompts.length, 0, "no word into the deleted session");
@@ -6004,6 +6012,11 @@ test("the owner's stop of a root in one instance takes down its child's satellit
     assert.ok(
       callsIn(calls).some((c) => c.name === "iskron/end" && c.pid === childPid),
       "the child's satellite is taken down by its own bridge",
+    );
+    assert.deepEqual(
+      callsIn(calls).find((c) => c.name === "iskron/end" && c.pid === childPid).arguments,
+      { event: "subagent_ended" },
+      "the child's bridge is told a subagent ended (#11362)",
     );
     assert.deepEqual(
       B.interrupts,
@@ -10901,5 +10914,238 @@ test("the bridge the plugin raises speaks the session language: accept-language 
       await rec.stop();
       await fake.stop();
     }
+  }
+});
+
+// child_ended (graph @nks/nks-dev, nodes #11362, #11359): the parent of an ended child gets the
+// server's platform notice — as any frame, steering — and the plugin's own «КОНЧЕН» is then not
+// also sent. The rule for a server without it: until the first notice is seen in the process the
+// end goes as before (word first, then the run's end, №147), and a notice of an end already told
+// is not delivered; once seen, the run ends first and the plugin's word goes only if no notice
+// came within the window. The process-wide mark is reset around each probe.
+const KNOWN = "__iskronChildEndedKnown";
+// The server's shape (nks-api): an ordinary queued platform message, like card_unanswered; its
+// body — the server's text in the parent's language, passed as is.
+const CE_BODY = "Субагент host.repo.opus-5.sub-1 закончил: сессия кончена.";
+const childEnded = (standing, standing_id = "sid-sub-1", body = CE_BODY) => ({
+  type: "message",
+  id: `ce-msg-${standing_id}`,
+  received_at: "2026-11-26T10:00:00Z",
+  body,
+  provenance: {
+    via: "platform",
+    auth: "none",
+    notice: "child_ended",
+    notice_data: { standing_id, standing, by: "self", reason: "session_ended" },
+  },
+});
+// The child's bridge names its seat's platform id at its run's end (runend.ts): the notice is
+// matched by it.
+const CE_IDS = { FB_END_IDS: "sid-sub-1" };
+const runEnded = (calls) =>
+  until(() => callsIn(calls).some((c) => c.name === "iskron/end"), "the run's end");
+// The bridge of pi and OpenCode gives a platform frame as a wake-up batch (backlog.ts); a lone frame too.
+const noticeTo = (b, pid, standing, kind = "backlog") => {
+  const f = childEnded(standing);
+  const ev =
+    kind === "backlog"
+      ? event("backlog", { pending: 0, frames: [f], text: `Побудка: кадров 1\n\n${f.body}` })
+      : event("frame", { frame: f, raw: JSON.stringify(f) });
+  appendFileSync(`${b.events}.${pid}`, ev);
+};
+const rootTurns = (rec) =>
+  rec.prompts.filter((p) => p.sessionID === "root").length +
+  rec.synthetics.filter((s) => s.sessionID === "root").length;
+
+test("child_ended on a server first seen sending it: the plugin's word went first, the notice of that end is not a second turn", async () => {
+  delete globalThis[KNOWN];
+  const { b, rec, rootPid, calls } = await leadChild("ce-first", CE_IDS);
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
+    await until(() => ends(rec).length === 1, "the plugin's word in the parent, as before");
+    await runEnded(calls);
+    await delay(200); // the run's end answered: the told end knows its seat's id
+    noticeTo(b, rootPid, `@tester:${SUB}`);
+    await until(() => /child_ended сервера о @tester:/.test(rec.said()), "the notice held back");
+    await delay(300);
+    assert.equal(rootTurns(rec), 1, "one turn in the parent");
+    assert.ok(globalThis[KNOWN], "the server is now known to send the notice");
+  } finally {
+    await rec.stop();
+    delete globalThis[KNOWN];
+  }
+});
+
+for (const kind of ["backlog", "frame"])
+  test(`child_ended (${kind}) on a server known to send it: one parent turn — the server's body as is, nothing of the plugin's own`, async () => {
+    globalThis[KNOWN] = true;
+    const { b, rec, rootPid, calls } = await leadChild(`ce-known-${kind}`, {
+      ISKRON_OPENCODE_CHILD_ENDED_MS: 5000,
+      ...CE_IDS,
+    });
+    try {
+      await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+      settle(rec);
+      await until(
+        () => callsIn(calls).some((c) => c.name === "iskron/end"),
+        "the child's run ends first",
+      );
+      noticeTo(b, rootPid, `@tester:${SUB}`, kind);
+      await until(() => /о конце субагента .* сказал сервер/.test(rec.said()), "the end heard");
+      await until(() => rootTurns(rec) > 0, "the notice in the parent");
+      await delay(300);
+      assert.equal(ends(rec).length, 0, "no «КОНЧЕН» of the plugin's own");
+      const into = rec.prompts.filter((p) => p.sessionID === "root");
+      assert.equal(into.length, 1, `the server's notice in the parent:\n${rec.said()}`);
+      if (kind === "backlog") assert.equal(into[0].delivery, "queue", "a queued wake-up");
+      assert.ok(into[0].text.includes(CE_BODY), `the body as is:\n${into[0].text}`);
+      assert.doesNotMatch(into[0].text, /session_ended|sid-sub-1/, "no text built from the fields");
+      assert.equal(rootTurns(rec), 1, "one turn in the parent");
+    } finally {
+      await rec.stop();
+      delete globalThis[KNOWN];
+    }
+  });
+
+// Round 2 п.1: a notice past the shown part of a stale batch (its count only) did not go into
+// the prompt, yet it was counted: the server's text never reached the agent and the plugin's own
+// end word was suppressed. Now it rides the prompt as is, and only then counts.
+test("child_ended past the shown part of a stale batch: its body rides the prompt, then it counts", async () => {
+  globalThis[KNOWN] = true;
+  const { b, rec, rootPid, calls } = await leadChild("ce-cut", {
+    ISKRON_OPENCODE_CHILD_ENDED_MS: 5000,
+    ...CE_IDS,
+  });
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
+    await runEnded(calls);
+    const words = Array.from({ length: 20 }, (_, i) => ({
+      type: "message",
+      id: `w-${i}`,
+      body: `слово ${i}`,
+      provenance: { from_standing: "@alari:sosed", from_karta_seq: 1226, auth: "pat" },
+    }));
+    const frames = [...words, childEnded(`@tester:${SUB}`)];
+    const { text, keys } = staleBatch(frames, () => false);
+    assert.ok(!text.includes(CE_BODY), "the notice is past the batch's shown part");
+    appendFileSync(`${b.events}.${rootPid}`, event("stale", { frames, marks: keys, text }));
+    await until(() => /о конце субагента .* сказал сервер/.test(rec.said()), "the end heard");
+    const into = rec.prompts.filter((p) => p.sessionID === "root");
+    assert.ok(
+      into.some((p) => p.text.includes(CE_BODY)),
+      `the server's body went into a prompt:\n${into.map((p) => p.text).join("\n---\n")}`,
+    );
+    assert.equal(ends(rec).length, 0, "the plugin's own word only without the server's");
+  } finally {
+    await rec.stop();
+    delete globalThis[KNOWN];
+  }
+});
+
+// Round 2 п.3: a seat name is reused — a notice for the next child of the same name (its own
+// standing_id) is not this child's end: this one's own word goes after the window, the notice
+// goes to the parent as itself.
+test("child_ended for a new seat of the same name is not this child's end: matched by standing_id", async () => {
+  globalThis[KNOWN] = true;
+  const { b, rec, rootPid, calls } = await leadChild("ce-reuse", {
+    ISKRON_OPENCODE_CHILD_ENDED_MS: 1500,
+    ...CE_IDS,
+  });
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
+    await runEnded(calls);
+    const other = childEnded(
+      `@tester:${SUB}`,
+      "sid-sub-2",
+      "Субагент того же имени, новый, кончен.",
+    );
+    appendFileSync(
+      `${b.events}.${rootPid}`,
+      event("frame", { frame: other, raw: JSON.stringify(other) }),
+    );
+    await until(() => ends(rec).length === 1, "this child's own word after the window");
+    assert.doesNotMatch(
+      rec.said(),
+      /о конце субагента .* сказал сервер/,
+      "not swallowed as its end",
+    );
+    assert.ok(
+      rec.prompts.some((p) => p.sessionID === "root" && /того же имени/.test(p.text)),
+      "the other seat's notice went to the parent as itself",
+    );
+  } finally {
+    await rec.stop();
+    delete globalThis[KNOWN];
+  }
+});
+
+// nks-api #48: an end that is the parent's own act (the launcher's revoke of its child's seat) gets
+// no child_ended. Nothing waits for one: the plugin's word goes at once, the launcher's call is
+// not held for the window, and a notice arriving after all is a told end, not a second turn. On
+// the former build the release waited the whole window for a notice that never comes.
+test("the launcher's revoke on a server that sends child_ended: no wait for a notice — the word at once, nothing held", async () => {
+  globalThis[KNOWN] = true;
+  const { b, rec, rootPid, calls } = await leadChild("ce-own", {
+    ISKRON_OPENCODE_CHILD_ENDED_MS: 6000,
+    ...CE_IDS,
+  });
+  try {
+    const at = Date.now();
+    const word = await rec.call(
+      "iskron_channel",
+      { realm: "nks-dev", action: "revoke", standing: `@me:${SUB}` },
+      "root",
+    );
+    assert.match(word.content, /отпущен/);
+    assert.ok(Date.now() - at < 4000, `the launcher's call was held ${Date.now() - at} ms`);
+    await until(() => ends(rec).length === 1, "the end word in the parent", 3000);
+    await runEnded(calls);
+    await delay(200);
+    noticeTo(b, rootPid, `@tester:${SUB}`); // should the server send one after all
+    await until(() => /child_ended сервера о @tester:/.test(rec.said()), "a told end, held back");
+    await delay(300);
+    assert.equal(rootTurns(rec), 1, "one turn in the parent");
+  } finally {
+    await rec.stop();
+    delete globalThis[KNOWN];
+  }
+});
+
+test("a platform message without notice child_ended is no child's end: the plugin's own word after the window", async () => {
+  globalThis[KNOWN] = true;
+  const { b, rec, rootPid } = await leadChild("ce-other", { ISKRON_OPENCODE_CHILD_ENDED_MS: 800 });
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
+    const f = childEnded(`@tester:${SUB}`);
+    f.provenance = { ...f.provenance, notice: "card_unanswered" };
+    const top = { type: "notice", notice: "child_ended", standing: `@tester:${SUB}` };
+    for (const x of [f, top])
+      appendFileSync(
+        `${b.events}.${rootPid}`,
+        event("frame", { frame: x, raw: JSON.stringify(x) }),
+      );
+    await until(() => ends(rec).length === 1, "the plugin's word: neither was a child_ended");
+  } finally {
+    await rec.stop();
+    delete globalThis[KNOWN];
+  }
+});
+
+test("child_ended known but silent this time: after the window the plugin's own word, once", async () => {
+  globalThis[KNOWN] = true;
+  const { rec } = await leadChild("ce-silent", { ISKRON_OPENCODE_CHILD_ENDED_MS: 300 });
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
+    await until(() => ends(rec).length === 1, "the plugin's word after the window");
+    await delay(300);
+    assert.equal(rootTurns(rec), 1, "one turn in the parent");
+  } finally {
+    await rec.stop();
+    delete globalThis[KNOWN];
   }
 });

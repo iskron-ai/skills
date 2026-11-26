@@ -312,6 +312,7 @@ export async function startFakeNks(opts = {}) {
     places: new Map(), // "karta:name" → { karta, name, incoming }
     hung: new Set(), // сокеты, в которые служба перестала писать (/control {ws_hang})
     pulses: [], // { at, place, frame } — кадры pulse, присланные мостом по сокету (#7529)
+    lives: [], // { at, place, frame } — answers {type:"life"} to the server's life_check (#11362)
     placeAttrs: new Map(), // "karta:name" → attrs места, последние принятые; переживают revoke (#6401)
     closedPlaces: new Set(), // "karta:name" снятых revoke: register по ним — 404
     placeArgs: [], // поля места, которые фейк ПРИНЯЛ у connect/mint/register (#5174) — после отсева по схеме; посланное — в calls
@@ -332,6 +333,14 @@ export async function startFakeNks(opts = {}) {
     turned404: false, // апгрейд по адресу, который повернул connect того же места, — HTTP 404, как у контура
     latestToken: new Map(), // имя места → адрес сокета последнего connect
     stopAbsent: opts.stopAbsent ?? 0, // 404 | 405: api без снятия по ws-токену (№675)
+    // The end event by the ws token (#11362): POST /api/channel/ws/{token}/event {event,
+    // session_id?}. endEvent: true — the route answers 200 {ended:[ids], event} (a token not
+    // current — 404 ws_token_not_current, nothing ended); 404 (no rule) | 405 — an api without
+    // it, the shape deployed today (the default: 404); {status, rule} — that refusal, nothing ended
+    // (403 human_seat_needs_front, 422 event_unknown | session_id_invalid); "drop" — the
+    // connection cut with no answer. stopKeeps applies: a seat another channel holds is not ended.
+    endEvent: opts.endEvent ?? 404,
+    endEvents: [], // every end event's body as it came, answered or not
     takeInWindow: null, // "karta:name": чужой connect сразу после последней сверки моста (№677)
     stopKeeps: new Set(), // "karta:name": места, которые держит другой живой канал, — снятие по токену их не снимает
     beforeStopReply: null, // () => void: проба вклинивается в снятие по токену до ответа
@@ -687,9 +696,21 @@ export async function startFakeNks(opts = {}) {
     // текущий, проверка и снятие разом; 200 перечисляет лишь реально снятые; иначе 404 с правилом
     // ws_token_not_current, ничего не тронуто. stopAbsent: 404 | 405 — api без этой ручки (404 без
     // правила, как незнакомый маршрут). beforeStopReply — проба вклинивается до ответа.
-    if (p.startsWith("/api/channel/ws/") && p.endsWith("/stop") && req.method === "POST") {
-      st.counts.stops++;
-      if (st.stopAbsent) return json(res, st.stopAbsent, { title: "Not Found" });
+    const endRoute = p.startsWith("/api/channel/ws/") && p.endsWith("/event");
+    if (endRoute && req.method === "POST") {
+      st.endEvents.push(JSON.parse((await body(req)) || "{}"));
+      const e = st.endEvent;
+      if (e === "drop") return req.socket.destroy(); // a network error: no answer at all
+      if (typeof e === "object" && e)
+        return json(res, e.status, { title: "Refused", errors: [{ rule: e.rule, message: "" }] });
+      if (e !== true) return json(res, e, { title: "Not Found" });
+    }
+    if (
+      ((p.startsWith("/api/channel/ws/") && p.endsWith("/stop")) || endRoute) &&
+      req.method === "POST"
+    ) {
+      if (!endRoute) st.counts.stops++;
+      if (st.stopAbsent && !endRoute) return json(res, st.stopAbsent, { title: "Not Found" });
       const refuse = st.stopRefuseNext.shift();
       if (refuse) {
         if (refuse.delayMs) await new Promise((r) => setTimeout(r, refuse.delayMs));
@@ -697,7 +718,7 @@ export async function startFakeNks(opts = {}) {
       }
       takeInWindow();
       st.beforeStopReply?.();
-      const tok = p.slice("/api/channel/ws/".length, -"/stop".length);
+      const tok = p.slice("/api/channel/ws/".length, endRoute ? -"/event".length : -"/stop".length);
       const name = st.wsTokens.get(tok);
       const chan = st.channels.get(st.wsChannel.get(tok));
       if (name === undefined || st.latestToken.get(name) !== tok || !chan?.places.size)
@@ -714,6 +735,11 @@ export async function startFakeNks(opts = {}) {
         ended.push({ standing_id: pl.standing_id, ended_at: new Date().toISOString() });
       }
       if (st.stopReplyDelayMs) await new Promise((r) => setTimeout(r, st.stopReplyDelayMs));
+      if (endRoute)
+        return json(res, 200, {
+          ended: ended.map((e) => e.standing_id),
+          event: st.endEvents.at(-1)?.event,
+        });
       return json(res, 200, {
         channel_id: st.wsChannel.get(tok),
         ended_by: "self",
@@ -2600,6 +2626,7 @@ export async function startFakeNks(opts = {}) {
           frame = JSON.parse(f.payload.toString("utf8"));
         } catch {}
         if (frame?.type === "pulse") st.pulses.push({ at: Date.now(), place: placeName, frame });
+        if (frame?.type === "life") st.lives.push({ at: Date.now(), place: placeName, frame });
       }
     });
     socket.on("end", () => socket.destroy()); // полуоткрытый сокет закрывается целиком

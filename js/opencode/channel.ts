@@ -14,10 +14,12 @@ import { cardFrame } from "../shared/open-cards.ts";
 import { carryGraphMarks, deliveryKeys, isLifeCheck } from "../shared/seen.ts";
 import { separateGraphBatch } from "../shared/softbatch.ts";
 import { authDir } from "./bridge-io.ts";
+import { endToldAlready, laidEnds, rideEnds } from "./childendride.ts";
 import { createCuts } from "./cuts.ts";
 import { processDescendants, processParent, shareLineage } from "./cutwait.ts";
+import { createHolds, live } from "./endgate.ts";
 import { createHalts, descendantsOf } from "./halts.ts";
-import { accepting as accepts, archiver } from "./host.ts";
+import { archiver } from "./host.ts";
 import { channelEnds } from "./leadends.ts";
 import { type ChildLeads, fromLauncher, NO_LEADS } from "./leadframes.ts";
 import { createLifeChecks } from "./lifecheck.ts";
@@ -96,8 +98,8 @@ export function setupChannel(
     (id, message) => say(W.haltUnwritten(id, message), "warning"),
     (id, message, kept) => say(W.haltUnlifted(id, message, kept), "warning"),
   );
-  const accepting = (id: string): Promise<"live" | "ended" | "unknown"> => accepts(ctx, id);
   const ends = channelEnds(authDir, say);
+  const holds = createHolds(ctx, say, W);
 
   // Every delivery is a log line with the address and the frame, a refusal is loud (#4355).
   async function deliver(
@@ -109,18 +111,9 @@ export function setupChannel(
   ): Promise<{ session: string; inbox: string | null } | null> {
     let id = session;
     if (id && ends.has(id)) return null;
-    // Only the host's "ended" drops a word: an unknown session (the host did not answer) still gets it.
-    if (child && (!id || (await accepting(id)) === "ended")) {
-      // The child's seat outlived it: the frame is not the root's (#5167); it stays in the seat's history.
-      say(W.childGone(frame, id ?? "?", text.slice(0, 120)), "error");
-      return null;
-    }
-    if (id && (await accepting(id)) === "ended") {
-      say(W.sessionClosed(id, frame), "warning");
-      return null;
-    }
+    if (!(await holds.admit({ session: id, text, frame, delivery, child }))) return null; // endgate.ts
     id ??= freshestRoot();
-    if (id && id !== session && (await accepting(id)) === "ended") id = null;
+    if (id && id !== session && !(await live(ctx, id))) id = null;
     if (!id) {
       say(W.nowhere(frame, text.slice(0, 120)), "error");
       return null;
@@ -135,12 +128,13 @@ export function setupChannel(
       say(W.childEnded(frame, id, text.slice(0, 120)), "info");
       return null;
     }
+    text = rideEnds(id, text); // a child_ended not yet in a prompt rides this one (childendride.ts)
     try {
       const r: any = await ctx.session.prompt({ sessionID: id, text: markFrame(text), delivery });
       say(W.delivered(frame, id), "info");
       const inbox = r?.id ?? r?.data?.id;
       const got = { session: id, inbox: typeof inbox === "string" ? inbox : null };
-      prompted(got.session, got.inbox, delivery, text);
+      prompted(got.session, got.inbox, delivery, laidEnds(id, text));
       return got;
     } catch (e) {
       say(W.notDelivered(frame, id, (e as Error).message), "error");
@@ -326,11 +320,13 @@ export function setupChannel(
 
   return {
     status(session, on) {
+      holds.poke(session);
       if (on) tacts.busy(session);
       else this.taken(session);
     },
     gone(session) {
       ends.end(session);
+      holds.gone(session);
       for (const k of ["child", "root"]) dropPile(`${k}:${session}`);
       tacts.gone(session);
       lives.gone(session);
@@ -372,6 +368,7 @@ export function setupChannel(
     },
     stop() {
       unshare();
+      holds.stop();
       tacts.stop();
       cuts.stop();
       for (const p of piles.values()) {
@@ -393,6 +390,7 @@ export function setupChannel(
     onEvent(session, params: any, child = false) {
       const ev = params?.data as ChannelEvent | undefined;
       if (!ev || typeof ev !== "object") return;
+      holds.poke(session);
       if (session && ends.has(session)) {
         if (ev.kind === "held" && params?.data?.automatic === false) ends.lift(session);
         else {
@@ -405,6 +403,8 @@ export function setupChannel(
           return;
         }
       }
+      const told = endToldAlready(session, ev); // child_ended: as any frame or batch (childended.ts)
+      if (told) return say(W.childEndedTold(told), "info");
       switch (ev.kind) {
         case "frame": {
           const frame = cardFrame(ev.frame ?? null);
@@ -415,7 +415,7 @@ export function setupChannel(
             pile(session, child, frame);
             return say(P.listening(), "info");
           }
-          if (frame?.type === "status") return;
+          if (frame?.type === "status" || frame?.type === "life_check") return; // the bridge's
           // The frame's path (#5851): with event_kind — the kind's rule, without — its own stack (#4957).
           // The launcher's word to its working lead steers its turn whatever its stack (#7505).
           if (isLifeCheck(frame)) return lifeCheck(session, child, frame as Frame);

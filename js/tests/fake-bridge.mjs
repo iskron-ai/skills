@@ -455,8 +455,10 @@ process.stdin.on("data", (chunk) => {
           const [realm, karta, name] = s.split("|");
           return name ? { realm, karta, name } : s;
         });
+      // FB_END_IDS — the platform ids of the seats the run's end covered (comma-separated).
+      const ids = (process.env.FB_END_IDS ?? "").split(",").filter(Boolean);
       setTimeout(
-        () => ok(msg.id, { ended: true, failed, revoked, probably }),
+        () => ok(msg.id, { ended: true, failed, revoked, probably, ids }),
         Number(process.env.FB_END_DELAY_MS || 0),
       );
     } else if (msg.method === "iskron/usage") {

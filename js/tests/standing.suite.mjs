@@ -1745,44 +1745,44 @@ test("leave by the doer's word: socket closed, busy line cleared, place kept; is
   assert.equal(fake.state.status, "вернулся");
 });
 
-test("a harness that hears only through a watchdog: nobody listening past the threshold, the bridge leaves by itself; a watchdog attaching brings it back", async (t) => {
-  const { fake, dir, bridge, key } = await connected(t, { env: { ISKRON_BRIDGE_DEAF_MS: "1500" } });
+// The bridge does not decide a seat's fate itself (graph @nks/nks-dev, node #11362): with no
+// local listener the seat stays held, its socket open, and the server decides by its own
+// silence rule. The window of the former self-leave is the seam here: past three of them
+// nothing has left, nothing was revoked, and a leave by word still goes.
+test("a seat with no local listener: past the old window the bridge neither leaves nor revokes, the socket stays open; a leave by word still goes", async (t) => {
+  const { fake, bridge, standings } = await connected(t, { env: { ISKRON_BRIDGE_DEAF_MS: "700" } });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const known = new Set(fake.state.ws);
-  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
   const st = await bridge.call("tools/call", 4, {
     name: "iskron_channel",
     arguments: { realm: "nks-dev", action: "status", text: "работаю" },
   });
   assert.ok(!st.result?.isError, JSON.stringify(st));
-  await waitFor(
-    () => /left the standing: никто не слушает/.test(bridge.stderr),
-    "the bridge to leave on deafness",
-    6000,
-  );
-  await waitFor(() => fake.state.status === "", "the busy line to be cleared");
-  const wd = runClient("watchdog", dir, key, 8000);
-  await waitFor(() => fresh().length === 1, "a listener to bring the standing back");
-  await waitFor(() => /мост вернулся на место/.test(bridge.stderr), "the return to be logged");
-  await waitFor(
-    () => fake.state.status === "работаю",
-    "the busy line cleared by the leave to come back with the place",
+  const mcp = fake.state.counts.mcp;
+  await new Promise((r) => setTimeout(r, 2500));
+  assert.equal(fake.state.ws.size, 1, "the seat's socket is still held");
+  assert.doesNotMatch(bridge.stderr, /left the standing|parked |released /, bridge.stderr);
+  assert.equal(fake.state.status, "работаю", "the busy line is not cleared");
+  assert.equal(fake.state.counts.stops, 0, "no stop reached the server");
+  assert.equal(fake.state.counts.mcp, mcp, "no call into the server: neither a leave nor a revoke");
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".key")),
+    "the place is kept: the key file stays",
   );
   assert.ok(
-    bridge.notifications.some(
-      (n) => n.params?.data?.kind === "note" && /вернулся на место/.test(n.params.data.text),
+    !bridge.notifications.some((n) =>
+      ["dead", "evicted", "released"].includes(n.params?.data?.kind),
     ),
-    "the return is announced to the harness",
+    "no word of a dead token, an eviction or a release",
   );
-  await new Promise((r) => setTimeout(r, 2500));
-  assert.equal(
-    fresh().length,
-    1,
-    "with a listener attached the bridge stays and does not leave again",
-  );
-  assert.equal((bridge.stderr.match(/left the standing/g) ?? []).length, 1);
-  wd.proc.kill("SIGKILL");
-  await wd.done;
+  const left = await bridge.call("tools/call", 5, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  const text = left.result?.content?.[0]?.text ?? "";
+  assert.match(text, /ушёл с места/, text);
+  assert.match(bridge.stderr, /left the standing: по слову делателя/);
+  await waitFor(() => fake.state.ws.size === 0, "the socket closed by the leave");
+  assert.equal(fake.state.status, "", "the busy line is cleared by the leave");
 });
 
 test("pi and OpenCode hear by notification: their bridge never leaves for want of a watchdog", async (t) => {
@@ -5522,6 +5522,136 @@ test("watchdog-codex on one's own close puts the batch the bridge flushed into t
     /turn\/start[^\n]*записей 1, тебе 0/,
     `the flushed batch reached the thread before the exit:\n${wd.err}`,
   );
+});
+
+// The end gate (graph @nks/nks-dev, node #11359): the agent's session ended (the harness's word,
+// iskron/end) — the watchdog opens no turn more: not the batch the bridge flushed, not the
+// release word. Before the end nothing changes (the own-close probe above). On the former build
+// the end was an own release: the batch went into the thread, the release word to stdout.
+test("watchdog-codex at the agent's end: the flushed batch starts no turn, exit 0", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = codexHome(t);
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+  );
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-end",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await sendRoom(fake, progress(50));
+  await new Promise((r) => setTimeout(r, 500));
+  const reply = await bridge.call("iskron/end", 8, {});
+  assert.equal(reply.result?.ended, true, JSON.stringify(reply));
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the end is no alarm:\n${wd.err}`);
+  assert.doesNotMatch(
+    readFileSync(log, "utf8"),
+    /turn\/start/,
+    `no turn after the end:\n${wd.err}`,
+  );
+  assert.match(wd.err, /сессия агента кончена/);
+});
+
+test("watchdog under Monitor at the agent's end: no line on stdout after the end, exit 0", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, progress(51));
+  await new Promise((r) => setTimeout(r, 500));
+  const before = wd.out;
+  const reply = await bridge.call("iskron/end", 8, {});
+  assert.equal(reply.result?.ended, true, JSON.stringify(reply));
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the end is no alarm:\n${wd.out}\n${wd.err}`);
+  assert.equal(wd.out, before, `a stdout line is a turn — none after the end:\n${wd.out}`);
+  assert.match(wd.err, /сессия агента кончена/);
+});
+
+// Review №5823 [97] п.2: a seat beside in another graph gets the end flag too — on the former
+// build its watchdog got `own` without `ended`, and its flush and last word woke the ended session.
+test("the agent's end with a main seat and a seat beside: neither watchdog prints anything after, both exit 0", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const rb = await bridge.call("tools/call", 9, {
+    name: "iskron_stand",
+    arguments: { realm: "drugoy", karta: 48, name: "proba" },
+  });
+  const besideText = (rb.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.ok(!rb.result?.isError, besideText);
+  const besideKey = /watchdog (\S+)/.exec(besideText)?.[1];
+  assert.ok(besideKey && besideKey !== key, `the seat beside's key: ${besideText}`);
+  const main = runClient("watchdog", dir, key, 15_000);
+  const beside = runClient("watchdog", dir, besideKey, 15_000);
+  for (const w of [main, beside])
+    await waitFor(() => w.out.includes("слушаю стояние"), "the watchdogs to attach");
+  await sendRoom(fake, progress(52));
+  await new Promise((r) => setTimeout(r, 500));
+  const before = [main.out, beside.out];
+  const reply = await bridge.call("iskron/end", 10, {});
+  assert.equal(reply.result?.ended, true, JSON.stringify(reply));
+  const [rm, rs] = await Promise.all([main.done, beside.done]);
+  assert.equal(rm.exit, 0, `main:\n${main.out}\n${main.err}`);
+  assert.equal(rs.exit, 0, `beside:\n${beside.out}\n${beside.err}`);
+  assert.equal(main.out, before[0], `the main seat's watchdog printed after the end:\n${main.out}`);
+  assert.equal(beside.out, before[1], `the beside watchdog printed after the end:\n${beside.out}`);
+});
+
+// Review №5823 [97] п.3: with the Codex door already open, the flush ran before released(ended)
+// and put() sent turn/start before the watchdog read the end flag. Now: the end, no flush.
+test("watchdog-codex with its door already open at the agent's end: no turn/start after the end", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = codexHome(t);
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+  );
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-open",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "message",
+      id: "open-1",
+      body: "открой дверь",
+      provenance: {},
+    }),
+  });
+  const turns = () => (readFileSync(log, "utf8").match(/turn\/start/g) ?? []).length;
+  await waitFor(() => turns() === 1, "the door open: one turn");
+  // A deferred word to the seat: held by the window; a flush would put it into the thread.
+  await sendRoom(
+    fake,
+    roomFrame("said", { entry_id: 53, stack: "defer", envelope: { addressee: ME }, body: "Т-53" }),
+  );
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(turns(), 1, "the batch is still held");
+  const reply = await bridge.call("iskron/end", 11, {});
+  assert.equal(reply.result?.ended, true, JSON.stringify(reply));
+  const r = await wd.done;
+  assert.equal(r.exit, 0, wd.err);
+  await new Promise((r2) => setTimeout(r2, 300));
+  assert.equal(turns(), 1, `no turn/start after the end:\n${readFileSync(log, "utf8")}`);
 });
 
 // Дверь приняла сокет и молчит на upgrade: ожидание пачки на своём отпускании —
