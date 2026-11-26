@@ -55,6 +55,8 @@ const R = scoped(() => ({
    * for the return (a handover, a pause or an announced absence: latehold.ts)
    */
   late: null as "window" | "now" | "hold" | null,
+  /** the platform ids of the seats this run's end covered — the plugin's `end` answers them */
+  ids: [] as string[],
 }));
 
 interface Dead {
@@ -100,6 +102,7 @@ export function closeRun(
     const own = dying ? ownPlaces() : [];
     // Platform ids before the release forgets the doors: the stop's ended[] names seats by them.
     const ids = new Map(own.map((s) => [seatKeyOf(s), standingIdIn(s.realm)]));
+    R.ids = [...satIds.values(), ...ids.values()].filter((id): id is string => !!id);
     // The main seat's socket — its token ends the seat on the word or after the window (deadstop.ts).
     const socket = own[0] && own[0] === state.standing ? H.currentUrl : null;
     const ended = dying && now;
@@ -299,6 +302,8 @@ export function localEnd(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
   const named = (msg.params as { event?: unknown } | undefined)?.event;
   const event = END_EVENTS.find((e) => e === named) ?? null;
   return closeRun(words(RUN_END).pluginEnd(), false, true, event)
-    .then(({ failed, revoked, probably }) => answer({ ended: true, failed, revoked, probably }))
+    .then(({ failed, revoked, probably }) =>
+      answer({ ended: true, failed, revoked, probably, ids: R.ids }),
+    )
     .catch((e: Error) => answer({ ended: false, word: e.message }));
 }

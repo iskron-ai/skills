@@ -12,7 +12,7 @@
 import { tool } from "../delivery/index.ts";
 import { sameSeat } from "../shared/seat.ts";
 import { createCascade } from "./cascade.ts";
-import { sendsChildEnded, serverEnded, toldChildEnded } from "./childended.ts";
+import { type ChildSeat, sendsChildEnded, serverEnded, toldChildEnded } from "./childended.ts";
 import type { LeadDoors, Leads, RunEnd } from "./leaddoors.ts";
 import type { Up } from "./leadframes.ts";
 import { endWord, unrevokedWord, W } from "./leadwords.ts";
@@ -82,15 +82,17 @@ export function createLeads(d: LeadDoors): Leads {
     // A server known to send child_ended (childended.ts) tells the parent once the seat ends:
     // the run ends first, the plugin's own word goes only when no notice came within the window.
     // Otherwise — as before: the word first, then the run's end (№147). A plain seat that stays
-    // is not ended — no notice to wait for.
-    const seat = l.place?.name ?? null;
+    // is not ended — no notice to wait for. A notice names the child by its seat's id, which the
+    // run's end gives (the seat name is reused by the next child); by the name only without one.
+    const me: ChildSeat = { seat: l.place?.name ?? null, child, ids: [] };
+    const records: ChildSeat[] = [];
     const server = sendsChildEnded() && !kept;
     const told = async (): Promise<void> => {
       await tell(word, wake);
-      toldChildEnded(seat, child); // a late notice of this end is not a second turn
+      records.push(toldChildEnded(me)); // a late notice of this end is not a second turn
     };
     const heard = async (): Promise<boolean> => {
-      if (!(await serverEnded(seat, child))) return false;
+      if (!(await serverEnded(me))) return false;
       d.say(W().serverSaidEnd(who(l, child)), "info");
       return true;
     };
@@ -101,6 +103,7 @@ export function createLeads(d: LeadDoors): Leads {
     }
     // A failed release is a correction that does not wake.
     const run = await d.close(child).catch(() => null);
+    for (const c of [me, ...records]) c.ids.push(...(run?.ids ?? []));
     await d.end(child).catch((e: Error) => d.say(W().notDown(who(l, child), e.message), "warning"));
     if (server && (await heard())) return run;
     if (server) await told();

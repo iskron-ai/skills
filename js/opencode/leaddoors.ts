@@ -73,6 +73,8 @@ export interface Released {
 export interface RunEnd {
   failed: string[];
   revoked: SeatKey[];
+  /** The platform ids of the seats the run's end covered: a child_ended names its child by them. */
+  ids?: string[];
 }
 
 /** Its cases are not here: whether a leave is the last, the platform says (casesleft.ts). */
@@ -136,7 +138,8 @@ export function leadDoors(
       if (!got?.ended) return null;
       // A bare name (an older bridge) is no seat: it confirms nothing.
       const revoked = (got.revoked ?? []).filter((k: any) => typeof k?.name === "string");
-      return { failed: got.failed ?? [], revoked };
+      const ids = (got.ids ?? []).filter((id: unknown) => typeof id === "string");
+      return { failed: got.failed ?? [], revoked, ids };
     },
     sits: (child, realm) => casesLeft(slots.get(child)?.bridge, realm),
     seal: (child) => end(child, null),

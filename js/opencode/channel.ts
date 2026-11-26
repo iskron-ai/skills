@@ -15,7 +15,7 @@ import { cardFrame } from "../shared/open-cards.ts";
 import { carryGraphMarks, deliveryKeys, isLifeCheck } from "../shared/seen.ts";
 import { separateGraphBatch } from "../shared/softbatch.ts";
 import { authDir } from "./bridge-io.ts";
-import { endToldAlready } from "./childended.ts";
+import { endToldAlready, laidEnds, rideEnds } from "./childendride.ts";
 import { createCuts } from "./cuts.ts";
 import { processDescendants, processParent, shareLineage } from "./cutwait.ts";
 import { createHolds, live } from "./endgate.ts";
@@ -110,8 +110,7 @@ export function setupChannel(
   ): Promise<{ session: string; inbox: string | null } | null> {
     let id = session;
     if (id && ends.has(id)) return null;
-    // The end gate (endgate.ts): live — the word goes; ended — dropped; unknown — held, no turn.
-    if (!(await holds.admit({ session: id, text, frame, delivery, child }))) return null;
+    if (!(await holds.admit({ session: id, text, frame, delivery, child }))) return null; // endgate.ts
     id ??= freshestRoot();
     if (id && id !== session && !(await live(ctx, id))) id = null;
     if (!id) {
@@ -128,12 +127,13 @@ export function setupChannel(
       say(W.childEnded(frame, id, text.slice(0, 120)), "info");
       return null;
     }
+    text = rideEnds(id, text); // a child_ended not yet in a prompt rides this one (childendride.ts)
     try {
       const r: any = await ctx.session.prompt({ sessionID: id, text: markFrame(text), delivery });
       say(W.delivered(frame, id), "info");
       const inbox = r?.id ?? r?.data?.id;
       const got = { session: id, inbox: typeof inbox === "string" ? inbox : null };
-      prompted(got.session, got.inbox, delivery, text);
+      prompted(got.session, got.inbox, delivery, laidEnds(id, text));
       return got;
     } catch (e) {
       say(W.notDelivered(frame, id, (e as Error).message), "error");
@@ -408,7 +408,7 @@ export function setupChannel(
           return;
         }
       }
-      const told = endToldAlready(ev); // child_ended goes as any frame or batch (childended.ts)
+      const told = endToldAlready(session, ev); // child_ended: as any frame or batch (childended.ts)
       if (told) return say(W.childEndedTold(told), "info");
       switch (ev.kind) {
         case "frame": {
