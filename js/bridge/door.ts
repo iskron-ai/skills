@@ -128,8 +128,6 @@ export class Door {
   readonly ring: { raw: string; frame: Frame | null }[] = [];
   /** Delivered frames — the same memory the exit watchdog reads (../shared/seen.ts). */
   seen: Set<string>;
-  /** Since when no local client listens; null — someone listens. */
-  idleAt: number | null = Date.now();
   /** The bridge's memory plus the .seen file written by whoever delivered the frame. */
   readonly marks: Marks = (k) => marksOf(this.seen, this.seenPath)(k);
   /** Stale and wake batches are per seat (#5838). */
@@ -253,13 +251,9 @@ export class Door {
         unlinkSync(path);
       } catch {}
     }
-    const gone = (sock: Socket): void => {
-      this.clients.delete(sock);
-      if (this.clients.size === 0) this.idleAt = Date.now();
-    };
+    const gone = (sock: Socket): void => void this.clients.delete(sock);
     const onClient = bindScope((sock: Socket) => {
       this.clients.add(sock);
-      this.idleAt = null;
       sock.on("close", () => gone(sock));
       sock.on("error", () => gone(sock));
       this.hooks.onAttach();
@@ -436,6 +430,5 @@ export class Door {
       } catch {}
     }
     this.ring.length = 0;
-    this.idleAt = null;
   }
 }

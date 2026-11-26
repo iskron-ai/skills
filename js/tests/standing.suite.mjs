@@ -1743,44 +1743,42 @@ test("leave by the doer's word: socket closed, busy line cleared, place kept; is
   assert.equal(fake.state.status, "вернулся");
 });
 
-test("a harness that hears only through a watchdog: nobody listening past the threshold, the bridge leaves by itself; a watchdog attaching brings it back", async (t) => {
-  const { fake, dir, bridge, key } = await connected(t, { env: { ISKRON_BRIDGE_DEAF_MS: "1500" } });
+// The bridge does not decide a seat's fate itself (graph @nks/nks-dev, node #11362): with no
+// local listener the seat stays held, its socket open, and the server decides by its own
+// silence rule. The window of the former self-leave is the seam here: past three of them
+// nothing has left, nothing was revoked, and a leave by word still goes.
+test("a seat with no local listener: past the old window the bridge neither leaves nor revokes, the socket stays open; a leave by word still goes", async (t) => {
+  const { fake, bridge, standings } = await connected(t, { env: { ISKRON_BRIDGE_DEAF_MS: "700" } });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const known = new Set(fake.state.ws);
-  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
   const st = await bridge.call("tools/call", 4, {
     name: "iskron_channel",
     arguments: { realm: "nks-dev", action: "status", text: "работаю" },
   });
   assert.ok(!st.result?.isError, JSON.stringify(st));
-  await waitFor(
-    () => /left the standing: никто не слушает/.test(bridge.stderr),
-    "the bridge to leave on deafness",
-    6000,
-  );
-  await waitFor(() => fake.state.status === "", "the busy line to be cleared");
-  const wd = runClient("watchdog", dir, key, 8000);
-  await waitFor(() => fresh().length === 1, "a listener to bring the standing back");
-  await waitFor(() => /мост вернулся на место/.test(bridge.stderr), "the return to be logged");
-  await waitFor(
-    () => fake.state.status === "работаю",
-    "the busy line cleared by the leave to come back with the place",
+  const mcp = fake.state.counts.mcp;
+  await new Promise((r) => setTimeout(r, 2500));
+  assert.equal(fake.state.ws.size, 1, "the seat's socket is still held");
+  assert.doesNotMatch(bridge.stderr, /left the standing|parked |released /, bridge.stderr);
+  assert.equal(fake.state.status, "работаю", "the busy line is not cleared");
+  assert.equal(fake.state.counts.stops, 0, "no stop reached the server");
+  assert.equal(fake.state.counts.mcp, mcp, "no call into the server: neither a leave nor a revoke");
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".key")),
+    "the place is kept: the key file stays",
   );
   assert.ok(
-    bridge.notifications.some(
-      (n) => n.params?.data?.kind === "note" && /вернулся на место/.test(n.params.data.text),
-    ),
-    "the return is announced to the harness",
+    !bridge.notifications.some((n) => ["dead", "evicted", "released"].includes(n.params?.data?.kind)),
+    "no word of a dead token, an eviction or a release",
   );
-  await new Promise((r) => setTimeout(r, 2500));
-  assert.equal(
-    fresh().length,
-    1,
-    "with a listener attached the bridge stays and does not leave again",
-  );
-  assert.equal((bridge.stderr.match(/left the standing/g) ?? []).length, 1);
-  wd.proc.kill("SIGKILL");
-  await wd.done;
+  const left = await bridge.call("tools/call", 5, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  const text = left.result?.content?.[0]?.text ?? "";
+  assert.match(text, /ушёл с места/, text);
+  assert.match(bridge.stderr, /left the standing: по слову делателя/);
+  await waitFor(() => fake.state.ws.size === 0, "the socket closed by the leave");
+  assert.equal(fake.state.status, "", "the busy line is cleared by the leave");
 });
 
 test("pi and OpenCode hear by notification: their bridge never leaves for want of a watchdog", async (t) => {

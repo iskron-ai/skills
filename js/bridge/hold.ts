@@ -155,14 +155,6 @@ export const besideKeyIn = (realm: unknown): string | null => extraIn(realm)?.do
 export const isParked = (realm: string, karta: string | number, name: string): boolean =>
   H.parked && isOwn(realm, karta, name);
 
-/** Since when no local listener is at any door; null if listened to or nothing is held. */
-export function listenerIdleSince(): number | null {
-  if (!H.holder?.alive) return null;
-  const ds = doors();
-  if (!ds.length || ds.some((d) => d.clients.size > 0)) return null;
-  return Math.max(...ds.map((d) => d.idleAt ?? 0));
-}
-
 /** Called when a local client attaches: the watchdog is back at the place. */
 export function onListenerAttached(fn: () => void): void {
   H.attachHooks.push(fn);
