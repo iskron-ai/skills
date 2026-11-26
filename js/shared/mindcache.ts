@@ -99,12 +99,21 @@ export async function cachedSlice(
 }
 
 /** Tools that only read: a call of any other names a write to its realm. */
-const READS = new Set(["look", "orient", "search", "semantic_search", "history"].map(tool));
+const READS = new Set(["look", "orient", "search", "semantic_search"].map(tool));
+/**
+ * The history tool's actions that only read (its description: realm | node | delta | invert |
+ * revert | restore_node | restore_edge): revert and the restores change the graph — a write, as
+ * any action not named here.
+ */
+const HISTORY_READS = new Set(["realm", "node", "delta", "?"]);
+const reads = (name: string, args: { action?: unknown } | null): boolean =>
+  READS.has(name) || (name === tool("history") && HISTORY_READS.has(String(args?.action ?? "")));
 
 /** A call that may write `args.realm`: the cached slice of an account whose own mind it is goes. */
 export function wroteTo(name: string, args: unknown): void {
-  const realm = (args as { realm?: unknown } | null)?.realm;
-  if (READS.has(name) || typeof realm !== "string" || !entries.size) return;
+  const a = args as { realm?: unknown; action?: unknown } | null;
+  const realm = a?.realm;
+  if (reads(name, a) || typeof realm !== "string" || !entries.size) return;
   const r = realm.trim().toLowerCase();
   for (const e of entries.values())
     if (e.mind && (r === e.mind.toLowerCase() || r === "mind"))

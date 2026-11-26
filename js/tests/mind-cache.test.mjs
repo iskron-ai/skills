@@ -65,6 +65,26 @@ test("a slow server with nothing cached: the stand answers by ~3 s without rules
   });
 });
 
+// History that writes (revert, restore_node, restore_edge) changes the rules like any write;
+// a history read (realm, node, delta) does not.
+test("a history revert on the own mind drops the cached slice; a history read does not", async () => {
+  await withMux(async (ctx) => {
+    await ctx.fake.control({ mind: { rules: RULES } });
+    const { sessions } = await wave(ctx, 1, "hist");
+    const history = (args) =>
+      sessions[0].rpc("tools/call", {
+        name: "iskron_history",
+        arguments: { realm: "@tester/mind", ...args },
+      });
+    await history({ action: "node", node_id: "#30" });
+    await wave(ctx, 1, "hist-read");
+    assert.equal(slices(ctx.fake), 1, "a history read keeps the slice");
+    await history({ action: "revert", event_id: 7 });
+    await wave(ctx, 1, "hist-revert");
+    assert.equal(slices(ctx.fake), 2, "read again after the revert");
+  });
+});
+
 test("a write to the own mind drops the cached slice: the next stand reads it again", async () => {
   await withMux(async (ctx) => {
     await ctx.fake.control({ mind: { rules: RULES } });
