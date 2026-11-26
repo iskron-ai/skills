@@ -6,12 +6,23 @@
 // сервис — отлучка без прогона, как прежде.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 
+import { BUILT_PLUGIN } from "./built.mjs";
 import { bridgeEnv, callsIn, event, pidOf } from "./lead-kit.mjs";
 import { lostMarkers, plugin, SANDBOX, until } from "./opencode-kit.mjs";
+
+// The bundle's own judgement of a run's argv, exported from a copy (ISKRON_OPENCODE_PLUGIN aims it).
+const copy = join(SANDBOX, "runshape-built.mjs");
+writeFileSync(
+  copy,
+  readFileSync(process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, "utf8") +
+    "\nexport { continuesSession };\n",
+);
+const { continuesSession } = await import(pathToFileURL(copy).href);
 
 const names = (rec) => [...rec.tools().keys()];
 
@@ -76,23 +87,47 @@ test("a standalone run resuming a session (--session): a plain absence, no run n
   assert.ok(markers.length >= 1);
 });
 
-// The run's options are its argv elements before the message: a prompt that mentions a
-// continuation flag is no continuation; an option taking a value swallows the element after it.
+// The run's options are any argv elements after `run` up to `--` — OpenCode reads flags after
+// the message too (v2.2.7: `opencode run 'x' --session` — «Missing value for flag --session»):
+// a prompt that mentions a continuation flag is no continuation, it is an element of its own; a
+// known option taking a value swallows the element after it; an unknown one is skipped alone.
 for (const [what, args, continues] of [
   ["a prompt naming --session", ["--standalone", "Explain the --session flag"], false],
   ["--session abc and a message", ["--standalone", "--session", "abc", "x"], true],
   ["-c", ["--standalone", "-c"], true],
   ["--session=abc", ["--standalone", "--session=abc", "x"], true],
   ["a value that looks like a flag", ["--standalone", "--title", "-c", "x"], false],
-])
-  test(`a standalone run with ${what}: ${continues ? "a continuation, no run named" : "a new run, its pid named"}`, async (t) => {
-    const name = `run-argv-${what.replace(/\W+/g, "-")}`;
-    const { said, client } = await reloadMidTurn(t, name, ["opencode", "run", ...args]);
-    assert.deepEqual(
-      said.map((c) => [c.name, c.arguments]),
-      [["iskron/away", continues ? {} : { run_pid: client.pid }]],
-    );
+  // The reviewer's argv (№5817 [579]): the flag after the message.
+  [
+    "--session after the message",
+    ["--standalone", "continue the task", "--session", "ses_x"],
+    true,
+  ],
+  ["an unknown option with a value first", ["--worktree", "example", "--session", "x"], true],
+  ["-c after --", ["--standalone", "--", "-c"], false],
+]) {
+  // The judgement itself, on exact argv elements (the built bundle's own function).
+  test(`the run's argv with ${what}: ${continues ? "a continuation" : "a new run"}`, () => {
+    assert.equal(continuesSession(["/usr/bin/opencode", "run", ...args]), continues);
   });
+  // Through a live process: outside Linux `ps` joins the elements with spaces (a stated limit,
+  // runshape.ts argvOf) — a prompt with a flag's word inside is judged only where argv is exact.
+  const joined = args.some((x) => /\s/.test(x) && x.split(/\s+/).some((w) => w.startsWith("-")));
+  test(
+    `a standalone run with ${what}: ${continues ? "a continuation, no run named" : "a new run, its pid named"}`,
+    {
+      skip: joined && process.platform !== "linux" ? "ps joins argv outside Linux" : false,
+    },
+    async (t) => {
+      const name = `run-argv-${what.replace(/\W+/g, "-")}`;
+      const { said, client } = await reloadMidTurn(t, name, ["opencode", "run", ...args]);
+      assert.deepEqual(
+        said.map((c) => [c.name, c.arguments]),
+        [["iskron/away", continues ? {} : { run_pid: client.pid }]],
+      );
+    },
+  );
+}
 
 test("a stop of the shared service (a default-shape run, a reload): a plain absence", async (t) => {
   const { said } = await reloadMidTurn(t, "run-shared", null);

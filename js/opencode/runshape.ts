@@ -34,7 +34,8 @@ const CONTINUES = new Set(["--session", "-s", "--continue", "-c"]);
 /**
  * The run's argv elements: exact on Linux (/proc, NUL-separated); elsewhere `ps` joins them with
  * spaces and they are split back on whitespace — an element with spaces inside comes back as
- * several. null — not readable (no ps, the run gone).
+ * several (a limit: a prompt's word equal to a continuation flag reads as one — the seat is then
+ * not ended by the run and goes by its term). null — not readable (no ps, the run gone).
  */
 function argvOf(pid: number): string[] | null {
   try {
@@ -57,10 +58,13 @@ function argvOf(pid: number): string[] | null {
 }
 
 /**
- * The run continues a session: an option element among those after `run` — exactly `--session`,
- * `--session=…`, `-s`, `--continue` or `-c`. A value that follows an option taking one is no
- * option; the options end at the first positional element (the message) or at `--`: a prompt
- * that mentions «--session» never counts. No `run` element — not judged a new run.
+ * The run continues a session: an element after `run`, up to a literal `--`, that is exactly
+ * `--session`, `--session=…`, `-s`, `--continue` or `-c`. OpenCode reads flags after the message
+ * too (`opencode run 'x' --session` — «Missing value for flag --session»), so a positional
+ * element does not end the scan, nor does an unknown option (it is not assumed to take a value).
+ * The value after a known option that takes one is skipped: `--title -c` names a title. A prompt
+ * is an element of its own and never equals a flag: «Explain the --session flag» never counts.
+ * No `run` element — not judged a new run.
  */
 export function continuesSession(argv: string[]): boolean {
   const at = argv.findIndex(
@@ -69,9 +73,8 @@ export function continuesSession(argv: string[]): boolean {
   if (at < 0) return true;
   for (let i = at + 1; i < argv.length; i++) {
     const x = argv[i] ?? "";
-    if (x === "--" || !x.startsWith("-")) return false;
-    const name = x.split("=", 1)[0] ?? x;
-    if (CONTINUES.has(name)) return true;
+    if (x === "--") return false;
+    if (CONTINUES.has(x) || x.startsWith("--session=")) return true;
     if (VALUED.has(x)) i++; // its value
   }
   return false;
