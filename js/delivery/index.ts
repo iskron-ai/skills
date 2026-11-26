@@ -111,6 +111,7 @@ export { QUESTIONS, type QuestionWords } from "./words/questions.ts";
 export { REALMS, type RealmsWords } from "./words/realms.ts";
 export { RELEASES, type ReleasesWords } from "./words/releases.ts";
 export { RESUME, type ResumeWords } from "./words/resume.ts";
+export { RETURN_GATE, type ReturnGateWords } from "./words/returngate.ts";
 export { RITES, type RiteWords } from "./words/rites.ts";
 export { RITUALS, type RitualWords } from "./words/rituals.ts";
 export {
