@@ -6699,13 +6699,16 @@ for (const kind of ["leave", "evicted"])
 // session, created and removed at once (an update of the session's metadata carries no
 // location from the plugin and was seen not to keep the location: evicted at 61 min) —
 // only after a quiet stretch, never without a place.
+// Under the whole suite's load the event loop stalls: the quiet stretch (1.2 s) is twelve times
+// the activity's beat, so a stall does not read as quiet, and the keepalive is waited for long
+// past its stretch — the claim is that it comes, not how soon.
 test("keepalive: a held place creates and removes a child of its session after a quiet stretch; no place or fresh activity — nothing", async () => {
   const b = bridgeEnv("keepalive", { FB_TOOLS: LEAD_TOOLS });
-  const env = { ...b.env, ISKRON_KEEPALIVE_MS: 400 };
+  const env = { ...b.env, ISKRON_KEEPALIVE_MS: 1200 };
   const rec = await plugin(env);
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
-    await delay(700);
+    await delay(1600); // past the stretch
     assert.deepEqual(rec.updates, [], "no place — the location is not held");
     // A turn in the session is the durable activity itself: no event of ours while it goes.
     // A turn runs under its location: its events carry the envelope that extends the term.
@@ -6716,10 +6719,10 @@ test("keepalive: a held place creates and removes a child of its session after a
     step();
     const busy = setInterval(step, 100);
     await rootHolds(rec, b);
-    await delay(1000);
+    await delay(1600); // the activity lasts past the stretch
     clearInterval(busy);
     assert.deepEqual(rec.updates, [], "fresh activity — nothing laid");
-    await until(() => rec.updates.length > 1, "the keepalive after the quiet stretch");
+    await until(() => rec.updates.length > 1, "the keepalive after the quiet stretch", 30_000);
     assert.equal(rec.updates[0].create?.parentID, "root", "a child of the place's session");
     assert.deepEqual(rec.updates[1], { remove: { sessionID: "ka-1" } }, "removed at once");
     assert.deepEqual(rec.prompts, [], "the session is not prompted");
