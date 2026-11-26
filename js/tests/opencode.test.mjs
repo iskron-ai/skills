@@ -4081,9 +4081,15 @@ test("a spelling unloaded with a place and the wake fails: the twin says so loud
     await A.cleanup();
     await until(() => /не поднят — move refused/.test(twin.said()), "the loud line");
     assert.match(twin.said(), /\[iskron\/error\][^\n]*выгружен с местом \(k-w2\)/);
-    await until(() => twin.prompts.some((p) => p.sessionID === "w2"), "the word in w2");
-    const word = twin.prompts.find((p) => p.sessionID === "w2").text;
+    // The word rides w2's next tool reply, no turn of the plugin's own (#11359).
+    await until(() => twin.told(["w2"]).some((p) => p.sessionID === "w2"), "the word for w2");
+    const word = twin.notes.find((p) => p.sessionID === "w2").text;
     assert.match(word, /место k-w2 отпущено[\s\S]*iskron_stand/);
+    assert.deepEqual(
+      twin.prompts.filter((p) => p.sessionID === "w2"),
+      [],
+      "the twin's word opens no turn",
+    );
   } finally {
     await twin.stop();
     A.restore();

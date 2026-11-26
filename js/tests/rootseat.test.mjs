@@ -1297,16 +1297,18 @@ test(
       // Under the full suite a process can take longer than 800 ms to start. That does not
       // mean its queue was stuck: its successful late word is valid too (F4).
       await until(
-        () => next.told.includes(SEATED) || oc.wordsTo("next").some((w) => w.includes(SEATED)),
+        () => next.told.includes(SEATED) || oc.noted("next").some((w) => w.includes(SEATED)),
         "следующий корень услышал своё место",
       );
       await until(() => heldBy(s.dir, "hung").length === 1, "поздняя посадка завершилась", 20_000);
+      // The late word rides the next tool reply: no turn of the plugin's own (#11359).
       await until(
-        () => oc.wordsTo("hung").some((w) => w.includes(SEATED)),
+        () => oc.noted("hung").some((w) => w.includes(SEATED)),
         "второе слово модели о позднем успехе",
       );
-      const words = oc.wordsTo("hung").filter((w) => w.includes(SEATED));
+      const words = oc.noted("hung").filter((w) => w.includes(SEATED));
       assert.equal(words.length, 1, JSON.stringify(words));
+      assert.ok(!oc.wordsTo("hung").some((w) => w.includes(SEATED)), "no turn for the late word");
       assert.ok(words[0].includes(heldBy(s.dir, "hung")[0]));
       assert.deepEqual(
         heardSeats(s.fake),
@@ -1434,13 +1436,14 @@ test(
       assert.deepEqual(r.atRequest.seats, [], board(r, oc));
       assert.ok(!r.told.includes(SEATED), board(r, oc));
       await until(() => heldBy(s.dir, "root").length === 1, "поздний connect открыл место");
-      // Не подменяем посадку явным stand и не просим второй ход: слово само входит в сессию.
+      // Не подменяем посадку явным stand: слово едет с ответом следующего тула, своего хода нет (#11359).
       await until(
-        () => oc.wordsTo("root").some((w) => w.includes(SEATED)),
+        () => oc.noted("root").some((w) => w.includes(SEATED)),
         "модель услышала поздний успех",
       );
-      const late = oc.wordsTo("root").filter((w) => w.includes(SEATED));
+      const late = oc.noted("root").filter((w) => w.includes(SEATED));
       assert.equal(late.length, 1);
+      assert.ok(!oc.wordsTo("root").some((w) => w.includes(SEATED)), "no turn for the late word");
       assert.ok(late[0].includes(heldBy(s.dir, "root")[0]));
     } finally {
       await oc.stop();

@@ -381,6 +381,7 @@ export async function plugin(env = {}, ctxOpts = {}) {
     globalThis.__iskronStopAlone?.clear();
     globalThis.__iskronStopFull?.clear();
     globalThis.__iskronArchivedStops?.clear();
+    globalThis.__iskronReplyNotes?.clear(); // the plugin's own words waiting for a tool reply
     globalThis.__iskronArchiveQueue?.turns.clear();
     globalThis.__iskronArchiveQueue?.updating.clear();
   }

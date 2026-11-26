@@ -15,6 +15,7 @@ import { authDir } from "./bridge-io.ts";
 import { markerWaits } from "./marker.ts";
 import type { Context } from "./plugin.ts";
 import type { Home, LostEntry } from "./records.ts";
+import { toldAside } from "./replynotes.ts";
 import type { Slot } from "./slot.ts";
 
 /** How long to wait for the raised instance to take the marker. */
@@ -75,8 +76,6 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** An instance's doors: its seats (tools.ts), marker (adopt.ts) and sweep (plugin.ts), as Twin's. */
 export interface TwinDoors extends Omit<Twin, "home" | "wake"> {
   say(text: string, level: "info" | "warning" | "error"): void;
-  /** A loud word into the session (channel.ts, kind=lost). */
-  lost(session: string, text: string): void;
 }
 
 export function createTwins(ctx: Context, home: Home | null, d: TwinDoors) {
@@ -123,8 +122,9 @@ export function createTwins(ctx: Context, home: Home | null, d: TwinDoors) {
     if (gone) return;
     const named = roots.map((e) => e.key ?? e.session).join(", ");
     d.say(W.unloaded(h.directory, named, why), "error");
+    // The seat lost is said with the session's next tool reply, no turn (replynotes.ts).
     for (const e of roots)
-      d.lost(e.session as string, W.seatLost(e.key ?? W.thisSession(), h.directory, why));
+      toldAside(d.say)(e.session as string, W.seatLost(e.key ?? W.thisSession(), h.directory, why));
   }
 
   return {
