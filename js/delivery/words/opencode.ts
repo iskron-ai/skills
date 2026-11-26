@@ -62,6 +62,8 @@ export interface OpencodeWords {
   /** text — начало кадра. */
   childEnded: (frame: string, id: string, text: string) => string;
   sessionClosed: (id: string, frame: string) => string;
+  /** The host did not answer whether the session is live: the frame is held, no turn opens. */
+  sessionUnknown: (id: string, frame: string) => string;
   nowhere: (frame: string, text: string) => string;
   halted: (frame: string, id: string) => string;
   /** The pulse (#7529): the session holds so many frames laid and not taken by its turn yet. */
@@ -149,6 +151,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
       `Искрон: ${frame} не вложен — субагент сессии ${id} кончен, его сессия больше не будится; запись дела остаётся в деле (iskron_case history) — ${text}`,
     sessionClosed: (id, frame) =>
       `Искрон: сессия ${id} закрыта или в архиве — ${frame} не доставлен`,
+    sessionUnknown: (id, frame) =>
+      `Искрон: сессия ${id} — неизвестно, жива ли: хост не ответил — ${frame} не доставлен, ход не открывается`,
     nowhere: (frame, text) =>
       `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; запись дела остаётся в деле (iskron_case history), прямое слово не дошло — ` +
       text,
@@ -244,6 +248,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
       `Iskron: ${frame} not delivered — the subagent of session ${id} has ended, its session is not woken any more; a case record stays in the case (iskron_case history) — ${text}`,
     sessionClosed: (id, frame) =>
       `Iskron: session ${id} is closed or archived — the ${frame} was not delivered`,
+    sessionUnknown: (id, frame) =>
+      `Iskron: session ${id} — not known to be live: the host did not answer — the ${frame} was not delivered, no turn opens`,
     nowhere: (frame, text) =>
       `Iskron: ${frame} HAS NOWHERE TO GO — the plugin has seen no live root session; a case record stays in the case (iskron_case history), a direct word did not arrive — ` +
       text,

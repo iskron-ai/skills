@@ -1094,7 +1094,9 @@ test("a frame with no session seen at all is said aloud, not lost silently", asy
   }
 });
 
-test("a direct word for a session the host did not answer about still goes to that session", async () => {
+// The end gate: a session the host did not answer about is not known to be live — it may be
+// over. The frame is held: no turn opens in it, the word names the session and the frame.
+test("a direct word for a session the host did not answer about is held: no turn, a word to stderr", async () => {
   const b = bridgeEnv("unanswered");
   const faults = { getFails: 1000 };
   const rec = await plugin(b.env, {
@@ -1106,14 +1108,14 @@ test("a direct word for a session the host did not answer about still goes to th
     await rec.call("iskron_channel", { action: "connect" }, "holder");
     await delay(50);
     // The lookup fails another way than "no such session" (a storage hiccup, a session still
-    // loading): the host said no word of an end.
+    // loading): the host said no word of an end — and no word of life.
     appendFileSync(
       `${b.events}.${pidOf(b.log)}`,
       event("frame", { frame: frame("слово без ответа хоста"), raw: "" }),
     );
-    await until(() => rec.prompts.length === 1, "the direct word reaches the session");
-    assert.equal(rec.prompts[0].sessionID, "holder");
-    assert.match(rec.prompts[0].text, /слово без ответа хоста/);
+    await delay(300);
+    assert.equal(rec.prompts.length, 0, "no turn in a session not known to be live");
+    assert.match(rec.said(), /сессия holder — неизвестно, жива ли/, "the held word");
     assert.doesNotMatch(rec.said(), /закрыта или в архиве/, "an error is not read as an end");
   } finally {
     await rec.stop();

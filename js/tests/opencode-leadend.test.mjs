@@ -82,13 +82,14 @@ const event = (kind, extra) =>
 const PARENT_DIR = "/work/nks-methodology";
 const CHILD_DIR = "/work/skills-review-1237-en";
 
-async function leadChild(name, env = {}, sessions) {
+async function leadChild(name, env = {}, sessions, ctxOpts = {}) {
   const b = bridgeEnv(name, { FB_TOOLS: LEAD_TOOLS, ...env });
   const rec = await plugin(b.env, {
     sessions: sessions ?? [
       { id: "root", location: { directory: PARENT_DIR } },
       { id: "child", parentID: "root", location: { directory: CHILD_DIR } },
     ],
+    ...ctxOpts,
   });
   try {
     await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
@@ -402,6 +403,35 @@ test("a dispatch-marked turn is released by an interruption: the leave after it 
     });
     await until(() => ends(rec).length === 1, "the end without any turn text");
     await until(() => !alive(childPid), "the child's bridge to go");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The end gate of the teller (leaddoors.ts; graph @nks/nks-dev, nodes #11360, #11359): a session
+// the host did not answer about — its lookup failed another way than "no such session" — is not
+// known to be live, it may be over. No word opens a turn in it: the word goes up the parentID
+// chain to the nearest live ancestor; the chain is not to be read — the journal.
+test("a word about a child opens a turn in no session the host did not answer about: an unknown parent gets none", async () => {
+  const faults = {};
+  const { rec } = await leadChild("tell-unknown-parent", {}, undefined, { faults });
+  try {
+    await rec.call("iskron_case", { realm: "nks-dev", action: "join", room: "#77" }, "child");
+    faults.getFailsFor = new Set(["root"]); // the parent's lookup fails from here on
+    turn(rec, "первый ход: осмотр");
+    await until(
+      () => turnWords(rec).length === 1 || /слово не вложено никому/.test(rec.said()),
+      "the word's way",
+    );
+    await delay(300);
+    assert.equal(turnWords(rec).length, 0, "no «сдал ход» into a session not known to be live");
+    assert.equal(rec.synthetics.length, 0, "no synthetic at all");
+    assert.equal(rec.prompts.length, 0, "no prompt either");
+    assert.match(
+      rec.said(),
+      /сдал ход, не поручение[\s\S]*кончены, остановлены или не отвечают/,
+      "the word itself is in the journal",
+    );
   } finally {
     await rec.stop();
   }

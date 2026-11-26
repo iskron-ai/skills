@@ -15,6 +15,7 @@ import { TURN } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { quiet } from "../shared/quietframe.ts";
 import { lostWord, marked, speaks, type TurnSeen } from "../shared/turnend.ts";
+import { live } from "./endgate.ts";
 import { createInboxBook } from "./inbox.ts";
 import type { Context } from "./plugin.ts";
 
@@ -72,7 +73,14 @@ export function createTurnEnds(
     turns.delete(s);
     if (!t || t.woken) return;
     if (!lostWord({ ...t, heard: heard.get(s) ?? null })) return;
-    if (opts.skip(s) || !(await opts.on(s)) || opts.skip(s)) return;
+    if (
+      opts.skip(s) ||
+      !(await opts.on(s)) ||
+      opts.skip(s) ||
+      !(await live(ctx, s)) ||
+      opts.skip(s)
+    )
+      return;
     try {
       const r: any = await ctx.session.prompt({
         sessionID: s,

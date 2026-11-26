@@ -17,8 +17,9 @@ import { separateGraphBatch } from "../shared/softbatch.ts";
 import { authDir } from "./bridge-io.ts";
 import { createCuts } from "./cuts.ts";
 import { processDescendants, processParent, shareLineage } from "./cutwait.ts";
+import { held, live } from "./endgate.ts";
 import { createHalts, descendantsOf } from "./halts.ts";
-import { accepting as accepts, archiver } from "./host.ts";
+import { archiver } from "./host.ts";
 import { channelEnds } from "./leadends.ts";
 import { type ChildLeads, fromLauncher, NO_LEADS } from "./leadframes.ts";
 import { createLifeChecks } from "./lifecheck.ts";
@@ -95,7 +96,6 @@ export function setupChannel(
     (id, message) => say(W.haltUnwritten(id, message), "warning"),
     (id, message, kept) => say(W.haltUnlifted(id, message, kept), "warning"),
   );
-  const accepting = (id: string): Promise<"live" | "ended" | "unknown"> => accepts(ctx, id);
   const ends = channelEnds(authDir, say);
 
   // Every delivery is a log line with the address and the frame, a refusal is loud (#4355).
@@ -108,18 +108,11 @@ export function setupChannel(
   ): Promise<{ session: string; inbox: string | null } | null> {
     let id = session;
     if (id && ends.has(id)) return null;
-    // Only the host's "ended" drops a word: an unknown session (the host did not answer) still gets it.
-    if (child && (!id || (await accepting(id)) === "ended")) {
-      // The child's seat outlived it: the frame is not the root's (#5167); it stays in the seat's history.
-      say(W.childGone(frame, id ?? "?", text.slice(0, 120)), "error");
-      return null;
-    }
-    if (id && (await accepting(id)) === "ended") {
-      say(W.sessionClosed(id, frame), "warning");
-      return null;
-    }
+    // Only a session the host calls live gets a word: ended or unknown, the frame is held, no
+    // turn opens (end gate, endgate.ts).
+    if (await held(ctx, say, W, id, frame, text, child)) return null;
     id ??= freshestRoot();
-    if (id && id !== session && (await accepting(id)) === "ended") id = null;
+    if (id && id !== session && !(await live(ctx, id))) id = null;
     if (!id) {
       say(W.nowhere(frame, text.slice(0, 120)), "error");
       return null;

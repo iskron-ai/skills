@@ -118,7 +118,7 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     sessionOf: (child) => `сессии ${child}`,
     noParent: (text) => `${text}\n(родителя плагин не знает — итог некому)`,
     noLiveAncestor: (text) =>
-      `${text}\n(родитель и все предки кончены или остановлены — слово не вложено никому, оно здесь)`,
+      `${text}\n(родитель и все предки кончены, остановлены или не отвечают — слово не вложено никому, оно здесь)`,
     endUnwritten: (sessionID, message) =>
       `Искрон: конец субагента сессии ${sessionID} не записан на диск (${message}) — его держат лишь живые экземпляры плагина этого процесса, перезагрузку он не переживёт`,
     endUnlifted: (sessionID, message) =>
@@ -214,7 +214,7 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     noParent: (text) =>
       `${text}\n(the plugin does not know the parent — nobody to give the outcome to)`,
     noLiveAncestor: (text) =>
-      `${text}\n(the parent and every ancestor are ended or stopped — the word went into no session, it is here)`,
+      `${text}\n(the parent and every ancestor are ended, stopped or not answering — the word went into no session, it is here)`,
     endUnwritten: (sessionID, message) =>
       `Iskron: the end of the subagent of session ${sessionID} was not written to disk (${message}) — only this process's live plugin instances keep it, a reload will lose it`,
     endUnlifted: (sessionID, message) =>
