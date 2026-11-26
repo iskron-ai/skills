@@ -67,13 +67,14 @@ test("100 copies of one record under new frame ids are one count", async () => {
 
 // The breakdown (record-once probe of the 06:59–07:06Z stale batches): records 12–16 of a
 // case given as live counts; then the stale replay brings 11–16 again under new ids, and a
-// record of the case older than all given. Not one of them is news — no stale event comes.
-test("a stale replay of given records and of an older one wakes nothing", async () => {
+// record of the case never given. The given ones are no news; the one never given is
+// counted once however old (no order is inferred, #11359), and its repeat is a given one.
+test("a stale replay of given records wakes nothing; a record never given is counted once, however old", async () => {
   await withMux(async ({ fake, mux, session, journal }) => {
     const { s, channel_id } = await seat(fake, mux, session, "once-replay");
     for (let n = 12; n <= 16; n++) mux.push(record(channel_id, n, `first-${n}`));
     await waitFor("the live counts", () => given(s, 16));
-    for (let n = 11; n <= 16; n++) mux.push(record(channel_id, n, `again-${n}`, { stale: true }));
+    for (let n = 12; n <= 16; n++) mux.push(record(channel_id, n, `again-${n}`, { stale: true }));
     await sleep(2500);
     assert.deepEqual(
       events(s).filter((e) => e.kind === "stale"),
@@ -81,10 +82,14 @@ test("a stale replay of given records and of an older one wakes nothing", async 
       "no stale batch of records already counted",
     );
     for (let n = 12; n <= 16; n++) assert.equal(given(s, n), 1, `record ${n} once`);
-    assert.equal(given(s, 11), 0, "an older stale count is not news");
     // The journal names each dropped copy by frame id and record key, with its time (#11359).
     assert.match(journal(), /dropped as given to \S+: again-12→r-1\/12 /);
-    assert.match(journal(), /dropped as older to \S+: again-11→r-1\/11 /);
+    mux.push(record(channel_id, 11, "old-11", { stale: true }));
+    await waitFor("the never-given record", () => given(s, 11), 5000);
+    mux.push(record(channel_id, 11, "old-11-again", { stale: true }));
+    await sleep(2500);
+    assert.equal(given(s, 11), 1, "a record never given is counted once, its repeat dropped");
+    assert.match(journal(), /dropped as given to \S+: old-11-again→r-1\/11 /);
   });
 });
 
