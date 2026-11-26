@@ -11,7 +11,8 @@ import { words } from "../shared/lang.ts";
 import { sessionCwd } from "../shared/scope.ts";
 import { standingsDirOf } from "../shared/standings.ts";
 import { type Board, type BoardEntry, listens, nameOf, readBoard } from "./board.ts";
-import { type AskedHearing, callTool as call, realmList, resolveAgainstLed } from "./call.ts";
+import { boardRead } from "./boardread.ts";
+import { type AskedHearing, realmList, resolveAgainstLed } from "./call.ts";
 import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import {
@@ -169,7 +170,7 @@ export async function askedHearing(
   const local = await heldLocally(realm, karta, name, cwd);
   if (local === "other") return "other";
   if (local === "session") return "free";
-  const b = await call(tool("channel"), { action: "list", realm, karta }).catch(() => null);
+  const b = await boardRead(realm, karta).catch(() => null); // a return: the gate (boardread.ts)
   return boardHearing(b && !b.isError ? readBoard(b) : null, karta, name);
 }
 
