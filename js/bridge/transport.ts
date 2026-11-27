@@ -154,6 +154,15 @@ const TLS_REFUSALS = new Set([
 /** The account's key: a PAT outranks the store — with it the grant on disk is not read at all (#4267). */
 export const bearer = (): string | null => CFG.pat ?? loadStore().tokens?.access_token ?? null;
 
+// Whether the bridge left its own seat by word — standing.ts `seatLeft` over hold.ts `isParked`.
+// That module imports this one, so the question is handed down at load, not imported up: the
+// bundle stays without a cycle.
+let seatLeft: () => boolean = () => false;
+/** Names the judge of `seatLeft()` (standing.ts); until then no seat counts as left. */
+export const seatLeftJudgedBy = (judge: () => boolean): void => {
+  seatLeft = judge;
+};
+
 // One POST to the server for one JSON-RPC message. Forwards every message the
 // server answers with (JSON body or a per-request SSE stream) via onMessage —
 // except tools/list_changed, which goes to the harness whoever asked (toolsync.ts, #6819).
@@ -166,10 +175,12 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
   // The server's sign on the standing header this initialize was sent with (handshake.ts,
   // #11403): the session is bound already, and the register is not replayed into it — only
   // while nothing moved since the send: the same standing, no seat beside (the header binds
-  // the main seat alone), and this answer's session still the held one.
+  // the main seat alone), the seat not left by word (it returns by its own stand — standing.ts
+  // `rebind`), and this answer's session still the held one.
   const noteBinding = (answer: JsonRpcMessage): void => {
     if (!boundByHeader || !boundByHandshake(answer)) return;
     if (standingHeader() !== boundByHeader || state.places.length > 0) return;
+    if (seatLeft()) return;
     if (!answerSession || state.sessionId !== answerSession) return;
     state.standingSession = state.sessionId;
     log(

@@ -1629,6 +1629,79 @@ test("место в другом графе при знаке bound — register
   });
 });
 
+// Место, с которого мост ушёл словом (leave: адрес и имя держатся, сокет закрыт — hold.ts
+// `parkStanding`), знак не вяжет: оно возвращается своим стоянием, не register'ом
+// (standing.ts `rebind`), заголовок на возврате всё равно уходит — имя места держится,
+// а запись с него мост отказывает, как прежде. Проба зелёна и на мосте до знака.
+test("место, с которого мост ушёл словом, при знаке bound — отметки нет: возврат как прежде, без register", async (t) => {
+  await withFake(t, { standingSign: { bound: true } }, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await standUp(bridge, dir);
+    const held = await bridge.call("tools/call", 4, {
+      name: "iskron_channel",
+      arguments: { ...REG, action: "connect" },
+    });
+    assert.equal(held.result?.isError, undefined, JSON.stringify(held.result));
+    const left = await bridge.call("tools/call", 5, {
+      name: "iskron_channel",
+      arguments: { realm: REG.realm, action: "leave" },
+    });
+    assert.equal(left.result?.isError, undefined, JSON.stringify(left.result));
+    assert.match(left.result.content[0].text, /ушёл с места/, JSON.stringify(left.result));
+    const [regs, lists, binds] = [
+      fake.state.counts.register_standing,
+      fake.state.counts.list,
+      fake.state.counts.header_binds,
+    ];
+    await fake.control({ kill_session: true });
+
+    const call = await bridge.call("tools/call", 6, {
+      name: "iskron_me",
+      arguments: { action: "whoami" },
+    });
+    assert.ok(call.result && !call.result.isError && !call.error, JSON.stringify(call));
+    assert.equal(fake.state.counts.header_binds - binds, 1, "возврат нёс заголовок стояния");
+    assert.doesNotMatch(
+      bridge.stderr,
+      /standing bound by the handshake header/,
+      "знак не ставит отметку месту, с которого мост ушёл",
+    );
+    assert.equal(
+      fake.state.counts.register_standing - regs,
+      0,
+      "с места, с которого ушли, register не шлётся",
+    );
+    assert.equal(fake.state.counts.list - lists, 0, "доску возврат не читает");
+    assert.match(
+      bridge.stderr,
+      /standing not re-registered: the seat was left — it returns by its own stand/,
+      "сегодняшний путь места, с которого ушли",
+    );
+
+    // Запись с места, с которого ушли, — как прежде: мост отказывает вслух (deaf.ts
+    // `deafRefusal`, #6706), до сервера она не доходит.
+    const send = await bridge.call("tools/call", 7, { name: "iskron_channel", arguments: SEND });
+    assert.equal(send.result?.isError, true, JSON.stringify(send.result));
+    assert.match(send.result.content[0].text, /место proba без слуха/, JSON.stringify(send.result));
+    assert.match(
+      send.result.content[0].text,
+      /не уйдёт — не отправлен/,
+      JSON.stringify(send.result),
+    );
+    assert.equal(
+      fake.state.counts.attributed_send,
+      0,
+      "запись с места, с которого ушли, не уходит",
+    );
+    assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
+    assert.equal(
+      fake.state.counts.register_standing - regs,
+      0,
+      "и перед отказанной записью register не шлётся",
+    );
+  });
+});
+
 test("платформа потеряла привязку при живой сессии — мост чинит по пометке и повторяет слово", async (t) => {
   // Случаи «без видимого знака» (#3919, #3772): id сессии не менялся, а запись ушла
   // безавторной. Единственный знак — пометка в самом ответе; мост, который её читает,
