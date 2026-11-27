@@ -2991,12 +2991,24 @@ test("iskron_stand: a header count that does not match the parsed lines blocks a
 // The listener block names the doer's own harness — one line, not three: an
 // agent in pi launched the Claude Code watchdog from a block that offered all
 // of them (#5047). The bridge knows the harness from clientInfo.name.
+// agy (#11439): its MCP notifications do not wake a sleeping session, so the
+// block names the harness and its one recipe. Its handshake name is not
+// observed — both spellings are taken, and a name not known yet still gets the
+// recipe on the line that offers every recipe.
+const AGY_LINE =
+  /Слушать: в Antigravity CLI \(agy\) уведомления MCP спящую сессию не будят — .*run_command \(WaitMsBeforeAsync=500, IsDaemon=false, NotificationTimeoutSeconds большой или пустой\): node "[^"]+" watchdog-exit proba--931--_nks_nks-dev .*--lang ru \(выходит нулём на первом сообщении.*\); перевзводи после каждого выхода\./;
 for (const [client, expect, forbid] of [
   ["claude-code", /Слушать: под Monitor.*без Monitor — фоновой задачей/, /watchdog-codex/],
   ["codex-probe", /Слушать: в Codex внутри одной длинной команды.*без двери app-server/, /Monitor/],
   ["pi-iskron", /Слушает расширение pi само — сторож не нужен/, /watchdog/],
   ["opencode-iskron", /Слушает плагин OpenCode само — сторож не нужен/, /watchdog/],
-  ["stand-probe", /Monitor.*watchdog-exit.*watchdog-codex/s, /никогда/],
+  ["antigravity", AGY_LINE, /Monitor|watchdog-codex/],
+  ["agy-cli", AGY_LINE, /Monitor|watchdog-codex/],
+  [
+    "stand-probe",
+    /Слушать: под Monitor.*watchdog-exit.*watchdog-codex.*в Antigravity CLI \(agy\).*перевзводи после каждого выхода\./s,
+    /никогда/,
+  ],
 ]) {
   test(`the listener block speaks to its harness: ${client}`, async (t) => {
     const { bridge } = await ready(t, { ...INIT, clientInfo: { name: client, version: "0" } });
