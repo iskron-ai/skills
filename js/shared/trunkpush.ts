@@ -2,11 +2,12 @@
 // merge word speaks, not the push word (ritualjudge.ts). The target is read from what git
 // printed (`a..b  x -> main`), else from the refspecs (`main`, `HEAD:main`, `+x:refs/heads/master`),
 // else — no refspec, or HEAD — from the branch checked out in the session's directory.
+// The report's flag column tells a repeated push from a first one (refFlags, #11443).
 import { execFileSync } from "node:child_process";
 
 const TRUNK = /^(?:refs\/heads\/)?(?:main|master)$/;
-/** A ref line of git's push report: flag, summary, `from -> to`. */
-const REF_LINE = /^ [ *+-] \S+(?: \S+)*? +\S+ -> (\S+)/gm;
+/** A ref line of git's push report: its flag (` `, `*`, `+`; `-` prints no `from -> to`), summary, `from -> to`. */
+const REF_LINE = /^ ([ *+-]) \S+(?: \S+)*? +\S+ -> (\S+)/gm;
 
 /** A shell argument run split into words: whole quotes are one word. */
 export const words = (args: string): string[] =>
@@ -53,6 +54,13 @@ export const namesTrunk = (runs: string[]): boolean =>
   runs.some((args) => (targets(args) ?? []).some((r) => TRUNK.test(r)));
 
 /**
+ * The flags of the ref lines of git's push report — ` ` a ref updated, `+` forced, `*` new on the
+ * remote. A deleted ref prints no `from -> to` and is not among them; no report — none.
+ */
+export const refFlags = (output: string): string[] =>
+  [...output.matchAll(REF_LINE)].map((m) => m[1] ?? "");
+
+/**
  * Whether a push (its argument runs, what it printed) went to the trunk; null — not knowable. A
  * quiet push prints no report, and the session's folder need not be where it ran: with no refspec
  * naming the trunk and that folder on the trunk, either word could be false — none is said.
@@ -63,7 +71,7 @@ export function toTrunk(
   cwd: string | null,
   quiet = false,
 ): boolean | null {
-  const printed = [...output.matchAll(REF_LINE)].map((m) => m[1] ?? "");
+  const printed = [...output.matchAll(REF_LINE)].map((m) => m[2] ?? "");
   if (printed.length) return printed.some((r) => TRUNK.test(r));
   const branch = (): string => (cwd ? git(cwd, "symbolic-ref", "--short", "-q", "HEAD") : "");
   if (quiet) return namesTrunk(runs) ? true : isTrunk(branch()) ? null : false;

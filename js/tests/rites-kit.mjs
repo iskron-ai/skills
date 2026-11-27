@@ -29,7 +29,10 @@ after(() => rmSync(scratch, { recursive: true, force: true }));
 
 export const COVER =
   "---\niskron:\n  graph: r7\n  holon: 12\n  agent_role: 34\n  contract: 39\n  stamp: 2026-11-03\n---\n# x\n";
-export const PUSHED = "To github.com:o/r.git\n   a1b2c3d..e4f5a6b  feat/x -> feat/x";
+/** git's report of a first push: the branch is new on the remote, the PR is not open yet. */
+export const PUSHED = "To github.com:o/r.git\n * [new branch]      feat/x -> feat/x";
+/** …of a repeated one: the PR is open, the push ships nothing new — one line wakes (#11443). */
+export const AGAIN = "To github.com:o/r.git\n   a1b2c3d..e4f5a6b  feat/x -> feat/x";
 let n = 0;
 export function repo({ agents = COVER, settings, rituals } = {}) {
   const dir = join(scratch, `r${n++}`);

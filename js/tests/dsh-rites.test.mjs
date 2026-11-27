@@ -2,7 +2,8 @@
 // #11071): after a call of dsh's shell tool that pushed or merged, the line OpenCode and Claude
 // Code get from the delivery reaches the live session as one next-turn message — by the same
 // outcome rule (a visible refusal vetoes, a quiet push is judged by git's state, a push of tags
-// only says nothing). The waterfall's decision passes through unchanged.
+// only says nothing; a repeated push into an open PR gets one line, #11443). The waterfall's
+// decision passes through unchanged.
 //
 // The form of the mocks is NOT observed live. Source: the types and code of the installed
 // @deepseek-ai/dsh 0.2.2-rc.1 — `tools/post-execute(exec, result, next)` in
@@ -33,8 +34,11 @@ process.env.ISKRON_BRIDGE_LANG = "ru";
 
 const COVER =
   "---\niskron:\n  graph: r7\n  holon: 12\n  agent_role: 34\n  contract: 44\n---\n# x\n";
-const PUSHED = "To github.com:o/r.git\n   a1b2c3d..e4f5a6b  feat/x -> feat/x";
-const PUSH_WORD = /пуш — не отгрузка/;
+/** git's report of a first push (the branch is new on the remote) — and of a repeated one. */
+const PUSHED = "To github.com:o/r.git\n * [new branch]      feat/x -> feat/x";
+const AGAIN = "To github.com:o/r.git\n   a1b2c3d..e4f5a6b  feat/x -> feat/x";
+const PUSH_WORD = /пуш — не отгрузка\. Исполни/;
+const AGAIN_WORD = /повторный пуш — не отгрузка: по дельте — самопроверка и ревью по AGENTS\.md\./;
 const MERGE_WORD = /мерж: .*контур #12/;
 
 /** A repository with the cover (null — none), the process standing in it; git — a real one on
@@ -123,6 +127,18 @@ test("a branch's push: the push line as one next-turn message; the decision pass
   assert.ok(text.startsWith(`${FRAME_MARK} `), text);
   assert.ok(!text.slice(FRAME_MARK.length).trimStart().startsWith(FRAME_MARK), text);
   assert.match(text, PUSH_WORD);
+  assert.doesNotMatch(text, MERGE_WORD);
+});
+
+test("a repeated push into an open PR: one line, not the full push word", async (t) => {
+  repo(t);
+  const d = dsh(t);
+  await d.call("git push origin feat/x", { stderr: AGAIN });
+  assert.equal(d.sent.length, 1);
+  const [text] = texts(d.sent);
+  assert.ok(text.startsWith(`${FRAME_MARK} `), text);
+  assert.match(text, AGAIN_WORD);
+  assert.doesNotMatch(text, /Исполни самопроверку/);
   assert.doesNotMatch(text, MERGE_WORD);
 });
 
