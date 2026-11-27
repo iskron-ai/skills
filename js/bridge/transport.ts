@@ -15,6 +15,7 @@ import {
   retryAfterMs,
 } from "./downwindow.ts";
 import { closedUnder, DownError, errorCode, errorMessage, UpstreamError } from "./errors.ts";
+import { boundByHandshake } from "./handshake.ts";
 import { loginPublished } from "./oauth/flow.ts";
 import { repeatable } from "./repeat.ts";
 import { throughGate } from "./returngate.ts";
@@ -153,13 +154,42 @@ const TLS_REFUSALS = new Set([
 /** The account's key: a PAT outranks the store — with it the grant on disk is not read at all (#4267). */
 export const bearer = (): string | null => CFG.pat ?? loadStore().tokens?.access_token ?? null;
 
+// Whether the bridge left its own seat by word — standing.ts `seatLeft` over hold.ts `isParked`.
+// That module imports this one, so the question is handed down at load, not imported up: the
+// bundle stays without a cycle.
+let seatLeft: () => boolean = () => false;
+/** Names the judge of `seatLeft()` (standing.ts); until then no seat counts as left. */
+export const seatLeftJudgedBy = (judge: () => boolean): void => {
+  seatLeft = judge;
+};
+
 // One POST to the server for one JSON-RPC message. Forwards every message the
 // server answers with (JSON body or a per-request SSE stream) via onMessage —
 // except tools/list_changed, which goes to the harness whoever asked (toolsync.ts, #6819).
 export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => void): Promise<void> {
   let answered = false;
+  // The standing header this initialize is sent with (null — no initialize, or no standing
+  // to bind), and the session as the answer's own id leaves it.
+  let boundByHeader: string | null = null;
+  let answerSession: string | null = null;
+  // The server's sign on the standing header this initialize was sent with (handshake.ts,
+  // #11403): the session is bound already, and the register is not replayed into it — only
+  // while nothing moved since the send: the same standing, no seat beside (the header binds
+  // the main seat alone), the seat not left by word (it returns by its own stand — standing.ts
+  // `rebind`), and this answer's session still the held one.
+  const noteBinding = (answer: JsonRpcMessage): void => {
+    if (!boundByHeader || !boundByHandshake(answer)) return;
+    if (standingHeader() !== boundByHeader || state.places.length > 0) return;
+    if (seatLeft()) return;
+    if (!answerSession || state.sessionId !== answerSession) return;
+    state.standingSession = state.sessionId;
+    log(
+      `standing bound by the handshake header (${state.standing?.name ?? "unnamed"}) — no register replay`,
+    );
+  };
   const onMessage = (m: JsonRpcMessage): void => {
     if (msg.method && msg.id !== undefined && m.id === msg.id) answered = true;
+    if (boundByHeader && msg.id !== undefined && m.id === msg.id) noteBinding(m);
     if (isListChanged(m)) heardListChanged(msg, emit);
     else heard(m);
   };
@@ -207,7 +237,7 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
   const sentSession = state.sessionId;
   if (sentSession) headers["mcp-session-id"] = sentSession;
   if (state.protocolVersion) headers["mcp-protocol-version"] = state.protocolVersion;
-  const boundByHeader = isInit ? standingHeader() : null;
+  boundByHeader = isInit ? standingHeader() : null;
   if (boundByHeader) headers["x-nks-standing"] = boundByHeader;
 
   // The bridge asks for reply fields on every session open, re-opens too (shared/fields.ts).
@@ -309,11 +339,15 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
     if (sid !== state.sessionId) noteOpened(sid);
     state.sessionId = sid; // a session id may ride any answer, including an empty one
     state.sessionToken = token;
-    // A session opened with the header is bound at the handshake on a surface
-    // that honours it — and silently unbound on one that predates it, and the
-    // handshake does not say which. So the register is replayed regardless:
-    // one idempotent call per turnover buys attribution on both.
+    // A session opened with the header is bound at the handshake on a surface that
+    // honours it — and silently unbound on one that predates it. The handshake's own
+    // answer says which (handshake.ts, #11403): its sign (noteBinding, above) is the one
+    // thing that spares the register replay. No sign — a silent surface, a seat beside
+    // that the header does not bind — and the register is replayed as before: one
+    // idempotent call per turnover buys attribution on both.
   }
+  // Only the session this answer opened may be marked as bound by its sign.
+  answerSession = state.sessionId;
   if (res.status === 202 || res.status === 204) {
     requireAnswer();
     return;
