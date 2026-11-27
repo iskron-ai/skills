@@ -1,5 +1,22 @@
 # Changelog
 
+## [8.16.7](https://github.com/iskron-ai/skills/compare/v8.16.6...v8.16.7) (2026-11-27)
+
+
+### Bug Fixes
+
+* **bridge,opencode,extension,watchdog:** an ended seat opens no turn, every end is reported, life_check answered ([#904](https://github.com/iskron-ai/skills/issues/904)) ([a92c942](https://github.com/iskron-ai/skills/commit/a92c9428eb52ccd0faf7bd471e4be73bb4007b00))
+* **bridge,opencode:** a wake-up carries each case record once, a counts-only batch opens no turn, the watchdog's words ride the tool reply ([#906](https://github.com/iskron-ai/skills/issues/906)) ([3914835](https://github.com/iskron-ai/skills/commit/391483591d624385a68e6649daefbd346ffd5ab5))
+* **bridge:** a reply too long for the harness's line comes back as a refusal, not a dropped transport; doctor reads no Codex config it may not ([#910](https://github.com/iskron-ai/skills/issues/910)) ([3dbee4f](https://github.com/iskron-ai/skills/commit/3dbee4f4be07d250b0913f57688037e389aab52d))
+* **bridge:** a seat bound by the handshake header is not registered again on return ([#11403](https://github.com/iskron-ai/skills/issues/11403)) ([#915](https://github.com/iskron-ai/skills/issues/915)) ([8a45585](https://github.com/iskron-ai/skills/commit/8a45585556b90c6a01d3be01249a991a55ecdc95))
+* **bridge:** a seat passes the return gate once; a call does not wait at it past ~20 s ([#909](https://github.com/iskron-ai/skills/issues/909)) ([f9dc29e](https://github.com/iskron-ai/skills/commit/f9dc29eff5f6e229374eb744cfea2b2c32c613fa))
+* **bridge:** a word or question addressed to the seat reaches its raw socket at once, not after the batch window ([#911](https://github.com/iskron-ai/skills/issues/911)) ([253e804](https://github.com/iskron-ai/skills/commit/253e80494505025b728fa0c1b2eeb1a5f8979767))
+* **bridge:** the line-limit refusal says what the server did — applied only for a result, refused for an error ([#912](https://github.com/iskron-ai/skills/issues/912)) ([589fa6c](https://github.com/iskron-ai/skills/commit/589fa6cf7b243885116b7bca4b0d52c2777c159b))
+* **skills:** a CLI run's session is deleted only by its own id, never by title or list ([#914](https://github.com/iskron-ai/skills/issues/914)) ([a461cd9](https://github.com/iskron-ai/skills/commit/a461cd9af30e86e01f5f54f46df41cf35689f757))
+* **skills:** an agent run from the CLI only with an end that reaches the server ([#907](https://github.com/iskron-ai/skills/issues/907)) ([cb5644b](https://github.com/iskron-ai/skills/commit/cb5644bf9726aa1e123b036694c9f7868947000d))
+* **skills:** chief-of-staff reads the whole board in one cross-graph call, as the tool says, and points to rule 11 without retelling it ([#920](https://github.com/iskron-ai/skills/issues/920)) ([c3e1037](https://github.com/iskron-ai/skills/commit/c3e103757b386c43a516e61b63c6cde49d1b816c))
+* **watchdog:** the Codex door gives a deferred word after the running turn, not into it ([#913](https://github.com/iskron-ai/skills/issues/913)) ([fd5ebad](https://github.com/iskron-ai/skills/commit/fd5ebad331737594416b80b3a9cafd31849e038f))
+
 ## [8.16.6](https://github.com/iskron-ai/skills/compare/v8.16.5...v8.16.6) (2026-11-26)
 
 
