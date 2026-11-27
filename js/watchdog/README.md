@@ -7,6 +7,7 @@
 - `replay.ts` — ворота строки прицепления `watchdog`: ждёт кадров кольца, названных мостом, считает напечатанное, hello кольца — один (#5671).
 - `watchdog-exit.ts` — `watchdog-exit`: выход нулём на первом сообщении, для харнесов без наблюдателя.
 - `codex.ts` — `watchdog-codex`: кадр в идущий тред Codex через дверь app-server (#4286).
+- `defer.ts` — удержание сторожа Codex: слово с `defer` и вопрос месту не входят в идущий ход (`turn/start` на занятом треде — steer), а ждут прежнего окна пачки или едут со следующим прерывающим кадром одним ходом (#11433); проба — `standing-codex-defer.test.mjs`.
 - `words.ts` — доступ к словам сторожей на языке сессии (#6080); сами слова — `js/delivery/words/watchdog.ts`.
 
 Пробы — `js/tests/standing.test.mjs` (`make test-watchdog`), устаревшие сторожа нативного транспорта — `js/tests/watchdog-legacy.test.mjs`.
