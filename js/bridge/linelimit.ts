@@ -2,7 +2,8 @@
 // line by line with a fixed buffer, often 1–4 MB, and a longer line kills its whole MCP
 // transport — every later call fails until a reconnect. So a line over the limit is never
 // written: a response becomes a short refusal to the same id, which states the outcome the
-// cut reply carried — a result is carried out, an isError result or an error is not —
+// cut reply carried — a result is carried out, an isError result may be partly applied,
+// and a JSON-RPC error applied nothing —
 // anything else is dropped with a log line. BRIDGE_MAX_LINE_BYTES sets the limit; 0 — no limit.
 import { BRIDGE_NAME, envName, LINE_LIMIT, type LineCut } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
@@ -20,7 +21,7 @@ export function lineLimit(): number {
 
 const mb = (bytes: number): string => (bytes / MIB).toFixed(1);
 
-/** What the cut reply said, so the refusal states the server's own outcome. */
+/** What the cut reply said, so the refusal describes what is known of the outcome. */
 function cutOf(msg: JsonRpcMessage): LineCut {
   if (msg.error !== undefined && msg.error !== null) {
     // The code is the one part of the cut answer that reaches the short refusal: it is named

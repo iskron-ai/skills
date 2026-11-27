@@ -2,8 +2,8 @@
 // MCP client reads one JSON-RPC line into a fixed buffer, and a longer line kills its whole
 // transport. A reply over the limit (1 MiB by default) comes back as one short refusal to
 // the same id; the next call works; a reply under the limit passes untouched. The refusal
-// says the server's own outcome: a result is carried out, an isError result or a JSON-RPC
-// error (its code named) applied nothing. Through the full bridge and through the thin
+// says what is known: a result is carried out, an isError result may be partly applied,
+// and a JSON-RPC error (its code named) applied nothing. Through the full bridge and through the thin
 // bridge to the real daemon. ISKRON_BRIDGE_PATH points the probe at a past build: one from
 // before the limit writes the 2 MiB line as is, one from before the outcome calls an error
 // carried out — the reds this probe wants.
@@ -171,14 +171,18 @@ for (const daemon of [false, true]) {
     });
   });
 
-  test(`an oversized isError result is refused as not applied (${path})`, async () => {
+  test(`an oversized isError result may have been partly applied (${path})`, async () => {
     await withHarness(daemon, {}, async (b) => {
       const ref = await b.call("tools/call", { name: "iskron_search", arguments: {} });
       assert.ok(ref.bytes < 4096, `a short line, not the answer: ${ref.bytes} bytes`);
       assert.equal(ref.msg.error?.code, -32001, JSON.stringify(ref.msg));
-      assert.doesNotMatch(ref.msg.error.message, APPLIED.ru, "a refusal applied nothing");
-      assert.match(ref.msg.error.message, /ответил отказом/);
-      assert.match(ref.msg.error.message, /ничего не применено/);
+      assert.doesNotMatch(ref.msg.error.message, APPLIED.ru, "a refusal is not a confirmed write");
+      assert.match(ref.msg.error.message, /ответил отказом, слишком длинным, чтобы его показать/);
+      assert.match(
+        ref.msg.error.message,
+        /часть вызова могла примениться \(пачка отказывает и после части своих записей\) — перечитай цель, прежде чем повторять/,
+      );
+      assert.doesNotMatch(ref.msg.error.message, /ничего не применено/);
       assert.match(ref.msg.error.message, /fold=true/);
       const list = await b.call("tools/list");
       assert.ok(list.msg.result?.tools, "the transport is alive after the refusal");
@@ -186,15 +190,19 @@ for (const daemon of [false, true]) {
   });
 }
 
-test("in English the verdicts are the same: an error and a refusal applied nothing, a result is applied", async () => {
+test("in English an error applied nothing, a refusal may be partial, and a result is applied", async () => {
   await withHarness(false, { ISKRON_BRIDGE_LANG: "en" }, async (b) => {
     const err = await b.call("tools/call", { name: "iskron_history", arguments: {} });
     assert.match(err.msg.error.message, /JSON-RPC error \(code -32602\)/);
     assert.match(err.msg.error.message, /nothing was applied by this call/);
     assert.doesNotMatch(err.msg.error.message, APPLIED.en, "an error applied nothing");
     const ref = await b.call("tools/call", { name: "iskron_search", arguments: {} });
-    assert.match(ref.msg.error.message, /a refusal too long to show: nothing was applied/);
-    assert.doesNotMatch(ref.msg.error.message, APPLIED.en, "a refusal applied nothing");
+    assert.match(
+      ref.msg.error.message,
+      /a refusal too long to show: part of the call may have been applied \(a batch can refuse after some of its writes\) — re-read the target before retrying/,
+    );
+    assert.doesNotMatch(ref.msg.error.message, /nothing was applied/);
+    assert.doesNotMatch(ref.msg.error.message, APPLIED.en, "a refusal is not a confirmed write");
     const big = await b.call("tools/call", { name: "iskron_orient", arguments: {} });
     assert.match(big.msg.error.message, /carried out — a write, if it was one, is applied/);
   });
