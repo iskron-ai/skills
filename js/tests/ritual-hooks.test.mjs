@@ -10,7 +10,10 @@
 //     skills/iskronify/references/harness-surfaces.md — its js block is loaded
 //     as a module and its execute.after hook is called with a stand-in ctx;
 //   • the delivery's own judge (js/shared/ritualjudge.ts), which the plugin
-//     hooks of Claude Code and OpenCode run by the repository's cover (#9319).
+//     hooks of Claude Code and OpenCode run by the repository's cover (#9319);
+//   • for a repeated push into an open PR (#11443) — the delivery's Claude Code
+//     hook itself (hooks/rituals.mjs), run directly on git's real report: the
+//     first push of a branch gets the full word, a repeated one a single line.
 //
 // The rule both keep: a hook wakes on the OUTCOME, not on the command's form.
 // Help (`-h`, `--help`) and `--auto` never wake; the exit status speaks for the
@@ -21,16 +24,26 @@
 // the projection cannot drift from its source.
 //
 // ISKRON_HOOKS_SETTINGS / ISKRON_HOOKS_SURFACES / ISKRON_HOOKS_TEMPLATE point
-// the probe at any copy (a past revision) so it can be shown red before a fix.
+// the probe at any copy (a past revision) so it can be shown red before a fix;
+// ISKRON_RITUALS_HOOK — the delivery's hook at a past build.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { merged, pushed } from "../shared/ritualjudge.ts";
+import { merged, pushed, pushedAgain } from "../shared/ritualjudge.ts";
+import { BUILT_RITUALS_HOOK } from "./built.mjs";
 import { ritualSample, standServer } from "./opencode-stand.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -484,6 +497,47 @@ for (const [command, output, push, merge] of cases) {
   });
 }
 
+// A repeated push into a branch whose PR is open ships nothing new: one line wakes, the first
+// push — the full word (#11443). The signal is the flag column of git's own report: ` ` an
+// update, `+` a forced one — a repeat; `*` a ref the remote did not have, `-` a deletion — not;
+// no ref updated (quiet, cut, refused, nothing to push) — nothing is known to be a repeat, the
+// full word stays.
+// [command, output, repeated?]
+const againCases = [
+  [
+    "git push -u origin feat/x",
+    "To github.com:o/r.git\n * [new branch]      feat/x -> feat/x",
+    false,
+  ],
+  ["git push", "To github.com:o/r.git\n   a1b2c3d..e4f5a6b  feat/x -> feat/x", true],
+  ["git push 2>&1 | tail -3", "To github.com:o/r.git\n   1234567..89abcde  feat/x -> feat/x", true],
+  [
+    "git push --force-with-lease 2>&1 | tail -3",
+    "To github.com:o/r.git\n + 1234567...89abcde feat/x -> feat/x (forced update)",
+    true,
+  ],
+  // a new tag riding along is new on the remote: the full word
+  [
+    "git push --follow-tags 2>&1 | tail -3",
+    "To github.com:o/r.git\n   1234567..89abcde  feat/x -> feat/x\n * [new tag]         v2 -> v2",
+    false,
+  ],
+  [
+    "git push 2>&1 | tail -3",
+    "To github.com:o/r.git\n ! [rejected]        feat/x -> feat/x (non-fast-forward)\nerror: failed to push some refs",
+    false,
+  ],
+  ["git push -q origin feat/x 2>&1 | tail -3", "", false],
+  ["git push", "", false],
+  ["git push", "Everything up-to-date\n", false],
+];
+
+for (const [command, output, again] of againCases) {
+  test(`delivery judge, a repeated push: ${command}`, () => {
+    assert.equal(pushedAgain({ command, output, exit: 0 }), again, JSON.stringify(output));
+  });
+}
+
 // `|| true` hides a jq that failed to run: a regex that overruns the match
 // retry limit is silence forever, not a verdict — the exit status is judged.
 test("claude hooks: jq judges a long run of spaces without an error", () => {
@@ -886,6 +940,61 @@ test("quiet push: a session without a known directory stays silent", async () =>
   };
   await after(input);
   assert.equal(String(input.result.content).includes("пуш"), false, a);
+});
+
+// The flags above are git's own; here they are read from real pushes to a local bare remote,
+// not written by hand — the first push of a branch prints `* [new branch]`, the next one `a..b`
+// — and given to the delivery's Claude Code hook as the harness hands a call on (the streams
+// apart). The hook is run directly: this file keeps the real home for the guard probes above,
+// and rites-kit.mjs re-homes the process. The cover is this repo's own, written into the clone.
+test("a repeated push into an open PR wakes with one line, the first push with the full word", (t) => {
+  const { dir, a } = quietRepos();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(a, "AGENTS.md"), readFileSync(join(root, "AGENTS.md")));
+  const env = { ...process.env, LC_ALL: "C" };
+  /** What the delivery's hook says after the call that printed r. */
+  const word = (command, r) => {
+    const payload = JSON.stringify({
+      cwd: a,
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_input: { command },
+      tool_response: { stdout: r.stdout, stderr: r.stderr, exit_code: r.status },
+    });
+    const hook = process.env.ISKRON_RITUALS_HOOK ?? BUILT_RITUALS_HOOK;
+    const out = spawnSync(process.execPath, [hook], {
+      input: payload,
+      encoding: "utf8",
+      env: { ...env, ISKRON_BRIDGE_LANG: "ru" },
+    });
+    assert.equal(out.status, 0, out.stderr);
+    const said = JSON.parse(out.stdout || "{}").hookSpecificOutput?.additionalContext ?? "";
+    assert.equal(said.split("\n").filter((l) => l.includes("пуш")).length, 1, said);
+    return said;
+  };
+  git(a, "checkout", "-q", "-b", "feat/y", "main");
+  git(a, "commit", "-q", "--allow-empty", "-m", "first");
+  const first = spawnSync("git", ["push", "-u", "origin", "feat/y"], {
+    cwd: a,
+    encoding: "utf8",
+    env,
+  });
+  assert.match(first.stderr, /^ \* \[new branch\] +feat\/y -> feat\/y$/m);
+  git(a, "commit", "-q", "--allow-empty", "-m", "second");
+  const next = spawnSync("git", ["push", "origin", "feat/y"], { cwd: a, encoding: "utf8", env });
+  assert.match(next.stderr, /^ {3}[0-9a-f]+\.\.[0-9a-f]+ +feat\/y -> feat\/y$/m);
+  const full = word("git push -u origin feat/y", first);
+  const line = word("git push origin feat/y", next);
+  assert.match(
+    full,
+    /пуш — не отгрузка\. Исполни самопроверку и правила ревью\/PR по AGENTS\.md, «Самопроверка этапа»\./,
+  );
+  assert.doesNotMatch(full, /повторный пуш/);
+  assert.match(
+    line,
+    /^\[iskron\] повторный пуш — не отгрузка: по дельте — самопроверка \(«Самопроверка этапа»\) и ревью\.$/,
+  );
+  assert.doesNotMatch(line, /Исполни самопроверку/);
 });
 
 // Another forge's merge rides the same defs with its own head and confirmation

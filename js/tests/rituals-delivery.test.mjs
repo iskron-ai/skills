@@ -14,6 +14,7 @@ import { test } from "node:test";
 import { PREPARE, REPO_SIGNS } from "../delivery/index.ts";
 import { repoSigns } from "../shared/reposigns.ts";
 import {
+  AGAIN,
   bash,
   claudeRaw,
   COVER,
@@ -298,6 +299,60 @@ test("opencode: push and merge words after a shell call, once per call id", asyn
     assert.doesNotMatch(String(trunk.result.content), /пуш — не отгрузка/);
   } finally {
     await rec.stop();
+  }
+});
+
+// A repeated push into a branch whose PR is open ships nothing new: the word is one line, not the
+// full one — by the flag column of git's own report (`*` a new ref: the first push; ` ` an update:
+// a repeated one). Both carriers, both reports, both languages; a cover with the self-check
+// section, so the line cites it.
+test("a repeated push gets one line, the first push the full word", async () => {
+  const EN_HEADED = `${COVER}\n## Session lifecycle\n\n## Self-check of the stage\n`;
+  // [cover, the first push, the repeated one] — each the whole line
+  const words = [
+    [
+      HEADED,
+      /^\[iskron\] пуш — не отгрузка\. Исполни самопроверку и правила ревью\/PR по AGENTS\.md, «Самопроверка этапа»\.$/,
+      /^\[iskron\] повторный пуш — не отгрузка: по дельте — самопроверка \(«Самопроверка этапа»\) и ревью\.$/,
+    ],
+    [
+      EN_HEADED,
+      /^\[iskron\] a push ships nothing: .*, «Self-check of the stage» and the review section\)\. Shipping is the merge\.$/,
+      /^\[iskron\] a repeated push ships nothing new: over the delta — self-check \(«Self-check of the stage»\) and review\.$/,
+    ],
+  ];
+  // The delivery's lines of what a carrier said after the call: OpenCode appends them to the
+  // call's own output, Claude Code hands them on their own — here exactly one, the whole line.
+  const lines = (said) => said.split("\n").filter((l) => l.startsWith("[iskron]"));
+  for (const [lang, [agents, FULL, LINE]] of words.entries()) {
+    const claude = (output) =>
+      bash(repo({ agents }), "git push origin feat/x", output)?.additionalContext ?? "";
+    const { rec, run } = await opencode(repo({ agents }));
+    // a call id is told once per process
+    const open = async (n, output) => {
+      const p = shellCall(`push-${lang}-${n}`, "git push origin feat/x", output);
+      await run("execute.after", p);
+      return String(p.result.content);
+    };
+    let said;
+    try {
+      said = [
+        ["claude code", claude(PUSHED), claude(AGAIN)],
+        ["opencode", await open(1, PUSHED), await open(2, AGAIN)],
+      ];
+    } finally {
+      await rec.stop();
+    }
+    for (const [carrier, first, again] of said) {
+      const both = [
+        ["the first push", first, FULL],
+        ["the repeated push", again, LINE],
+      ];
+      for (const [which, text, word] of both) {
+        assert.equal(lines(text).length, 1, `${carrier}: ${which} — one line:\n${text}`);
+        assert.match(lines(text)[0], word, `${carrier}: ${which}`);
+      }
+    }
   }
 });
 

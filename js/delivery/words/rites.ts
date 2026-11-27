@@ -10,6 +10,11 @@ export interface RiteWords {
   /** Пуш открыл или обновил PR; check — заголовок самопроверки этапа в AGENTS.md репо, если узнан (#9351). */
   push: (check?: string) => string;
   /**
+   * Повторный пуш в ветку с открытым PR: отгрузки нет — по дельте самопроверка и ревью, одной
+   * строкой; check — как у push.
+   */
+  again: (check?: string) => string;
+  /**
    * Мерж форжи слил PR, ствол подтянут или пуш ушёл в ствол; holon — фокус-контур обложки, если
    * назван; heads — заголовки жизненного цикла и мержа в AGENTS.md репо, какие узнаны (#9351).
    */
@@ -30,6 +35,8 @@ export const RITES: Readonly<Record<Lang, RiteWords>> = {
     lifecycle: () => "Жизненный цикл сессии",
     push: (check) =>
       `[iskron] пуш — не отгрузка. Исполни самопроверку и правила ревью/PR по AGENTS.md${check ? `, «${check}»` : ""}.`,
+    again: (check) =>
+      `[iskron] повторный пуш — не отгрузка: по дельте — самопроверка${check ? ` («${check}»)` : ""} и ревью${check ? "" : " по AGENTS.md"}.`,
     merge: (holon, ...heads) =>
       `[iskron] мерж: исполни акты после мержа по AGENTS.md${cite(heads) ? ` (${cite(heads)})` : ""}${holon ? `; контур #${holon}` : ""}.`,
     early: (graph) =>
@@ -39,6 +46,8 @@ export const RITES: Readonly<Record<Lang, RiteWords>> = {
     lifecycle: () => "Session lifecycle",
     push: (check) =>
       `[iskron] a push ships nothing: self-check the diff, a vocabulary pass over the PR text; review — once per ready batch (AGENTS.md${check ? `, «${check}» and the review section` : ""}). Shipping is the merge.`,
+    again: (check) =>
+      `[iskron] a repeated push ships nothing new: over the delta — self-check${check ? ` («${check}»)` : ""} and review${check ? "" : " (AGENTS.md)"}.`,
     merge: (holon, ...heads) =>
       `[iskron] merge — the after-merge acts of AGENTS.md${cite(heads) ? ` (${cite(heads)})` : ""}: weave ${holon ? `holon #${holon}` : "the holon"}, advance the map, modes by evidence, close along the axis, reconcile, vocabulary pass; feedback reflection — if AGENTS.md calls for it; work by reference from an agent — only the transformation seed and the delivery modes.`,
     early: (graph) =>

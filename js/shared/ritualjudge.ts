@@ -3,8 +3,9 @@
 // delivery's hooks of every harness. A command is found as a command, help and --auto never
 // wake, the exit status speaks only for the last command of a chain or one before &&, a visible
 // refusal vetoes, a push of tags only is no branch for review; a quiet push is judged by the
-// state of git in the session's directory; a push to the trunk ships (trunkpush.ts, #8362).
-import { git, isTrunk, namesTrunk, toTrunk, words } from "./trunkpush.ts";
+// state of git in the session's directory; a push to the trunk ships (trunkpush.ts, #8362); a
+// repeated push into an open PR wakes with one line (#11443).
+import { git, isTrunk, namesTrunk, refFlags, toTrunk, words } from "./trunkpush.ts";
 
 /** A shell argument run: whole quotes are one word — a flag inside them is text. */
 const ARG = String.raw`(?:>&|\\.|'[^']*'|"(?:[^"\\]|\\.)*"|[^;&|)\n'"\\])*`;
@@ -124,6 +125,17 @@ export function pushedTo(c: ShellCall, cwd: string | null): "trunk" | "branch" |
   if (!pushed(c, cwd)) return null;
   const to = toTrunk(pushRuns(c), c.output, cwd, QUIET.test(c.command));
   return to === null ? null : to ? "trunk" : "branch";
+}
+
+/**
+ * Of a push `pushed` took: a repeated one into a branch whose PR is open — git's report names
+ * refs, and every one is an update (` `) or a forced update (`+`): nothing is new on the remote,
+ * so the word is one line (#11443). A new ref (`*`, the first push) is not a repeat; nor is a
+ * report that names none — quiet, cut, nothing to push: nothing is known, the full word stays.
+ */
+export function pushedAgain(c: ShellCall): boolean {
+  const flags = refFlags(c.output);
+  return flags.length > 0 && flags.every((f) => f === " " || f === "+");
 }
 
 /** Whether the call merged: the forge's merge by outcome, or the trunk pulled. */
