@@ -90,6 +90,15 @@ const brief = (s: string): string => {
   return t.length > 120 ? `${t.slice(0, 119)}\u2026` : t || "-";
 };
 
+/** A released rule (the volitive mode of the row's head) is no rule, in any wording of its mark. */
+const RELEASED = /\b[A-Z][a-z]\/[A-Z][a-z]\/Vs\b/;
+
+/** The description's fragment of a row's tail: the ` · …` segments before it are arrows and marks. */
+const fragment = (tail: string): string => {
+  const at = tail.indexOf(" — ");
+  return at < 0 ? "" : tail.slice(at + 3);
+};
+
 /** Recovery must retry a failed read; ordinary starts retain the soft diagnostic (#9817). */
 export interface MindSliceOptions {
   strict?: boolean;
@@ -109,10 +118,13 @@ export async function mindSlice(call: MindCall, options: MindSliceOptions = {}):
     const got = await call(tool("search"), { ...SLICE_ARGS, realm });
     if (got.isError) return unread(got.text);
     // A rule's line: its name, number and the description's fragment — the badges stay in the graph.
+    // The arrow count and marks of the row's tail are not the fragment; a released rule is skipped.
     const listed = got.text.split("\n").filter((l) => NODE_ROW.test(l)).length;
     const rows = got.text.split("\n").flatMap((l) => {
-      const [, name, seq, line] = MIND_ROW.exec(l) ?? [];
-      return name ? [`  ${name} (#${seq})${line ? ` — ${line}` : ""}`] : [];
+      const [, name, seq, head, tail] = MIND_ROW.exec(l) ?? [];
+      if (!name || RELEASED.test(head)) return [];
+      const line = tail ? fragment(tail) : "";
+      return [`  ${name} (#${seq})${line ? ` — ${line}` : ""}`];
     });
     if (!rows.length) return listed >= LIMIT ? `${W.empty()}\n${W.foot(true, LIMIT)}` : W.empty();
     return [W.head(rows.length), ...rows, W.foot(listed >= LIMIT, LIMIT)].join("\n");
