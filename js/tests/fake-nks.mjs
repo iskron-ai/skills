@@ -1482,6 +1482,14 @@ export async function startFakeNks(opts = {}) {
           extra,
         );
       }
+      // A test-supplied JSON-RPC error for a named tool, by the same leg.
+      if (msg.method === "tools/call" && opts.callErrors?.[msg.params?.name]) {
+        return fixtureReply(
+          res,
+          { jsonrpc: "2.0", id: msg.id, error: opts.callErrors[msg.params.name] },
+          extra,
+        );
+      }
       // Стояние делателя, смоделированное так, как его держит настоящая
       // поверхность: коррелятор писателя — идентификатор сессии MCP. Новая
       // сессия — другой писатель, и её память о регистрации собрана вместе со
