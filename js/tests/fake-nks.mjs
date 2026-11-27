@@ -2386,8 +2386,14 @@ export async function startFakeNks(opts = {}) {
                 ? `Найдено ${rules.length} узлов:\n` +
                   rules
                     .map(
+                      // Строка живого сервера (наблюдено 27.11.2026): за скобкой идёт счёт стрелок
+                      // « · стрелки N→ M←», затем фрагмент описания через « — »; описания нет —
+                      // фрагмента нет. Пометки (« · принято») и отпущенные строки — через r.row.
                       (r) =>
-                        r.row ?? `  📌 ${r.name} (#${r.seq}, phenomenon, Pt/Va/Ad, v1) — ${r.text}`,
+                        r.row ??
+                        `  📌 ${r.name} (#${r.seq}, phenomenon, Pt/Va/Ad, v1) · стрелки 1→ 0←${
+                          r.text ? ` — ${r.text}` : ""
+                        }`,
                     )
                     .join("\n") +
                   `\n\n↳ Выбери один узел и иди по стрелкам: iskron_look(realm="mind", node_id="#${rules[0].seq}")`

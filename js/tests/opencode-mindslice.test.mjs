@@ -27,8 +27,9 @@ const BLOCK = [
 const READINESS = "Вызывающая идентичность: @tester · handle @tester";
 const REALMS =
   "Доступные графы (1) — адресуй их как @owner/slug:\n    @tester/mind  r204  mind · 2026-09-23";
+// The server's row of the live form: the arrow count and a mark before the description's fragment.
 const SEARCH =
-  "Найдено 1 узлов:\n  📌 Итог — одной строкой (#31, phenomenon, Pt/Va/Ad, v1) — Фрагмент правила\n\n" +
+  "Найдено 1 узлов:\n  📌 Итог — одной строкой (#31, phenomenon, Pt/Va/Ad, v1) · стрелки 1→ 0← · принято — Фрагмент правила\n\n" +
   '↳ Выбери один узел и иди по стрелкам: iskron_look(realm="mind", node_id="#31")';
 
 function lay(name, extra = {}) {

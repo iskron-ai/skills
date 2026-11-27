@@ -66,6 +66,49 @@ test("iskron_stand: the answer closes with the human's rules — personal mark, 
   ]);
 });
 
+// The server's row carries the arrow count after the bracket (« · стрелки 1→ 0←»), then marks
+// (« · принято»), then the description's fragment; a rule without a description has no fragment.
+// A parser bound to the bracket's end read no row of that form and named the slice empty
+// while the human's rules stood in mind (graph @nks/nks-dev, #11437).
+test("iskron_stand: rows with the arrow count and marks — the fragment is the rule's line, not the marks", async (t) => {
+  const { text } = await stood(t, {
+    rules: [
+      { seq: 31, name: "Правило со счётом стрелок", text: "Фрагмент первого" },
+      {
+        row: "  📌 Правило с пометкой (#32, vimarsha/hint · подсказка, Pt/Va/Up, v3) · стрелки 2→ 0← · принято — Фрагмент второго…",
+      },
+      { row: "  📌 Правило без описания (#33, phenomenon, Pt/Va/Ad, v1) · стрелки 0→ 0←" },
+    ],
+  });
+  const lines = sliceIn(text).split("\n");
+  assert.equal(lines[0], W.head(3));
+  assert.deepEqual(lines.slice(1, -1), [
+    "  📌 Правило со счётом стрелок (#31) — Фрагмент первого",
+    "  📌 Правило с пометкой (#32) — Фрагмент второго…",
+    "  📌 Правило без описания (#33)",
+  ]);
+  assert.equal(lines.at(-1), W.foot(false, 100));
+});
+
+// A released rule (the volitive mode of the row's head) is not a rule, whatever wording carries
+// its mark: the mode says it, not the prose — a row in another wording is skipped the same.
+test("iskron_stand: a released rule is skipped by its mode, in any wording of the mark", async (t) => {
+  const { text } = await stood(t, {
+    rules: [
+      { seq: 31, name: "Правило в силе", text: "Фрагмент" },
+      {
+        row: "  📌 Отпущенное правило (#129, phenomenon, Pt/At/Vs, v2) · стрелки 4→ 0← · отпущено — Фрагмент отпущенного…",
+      },
+      {
+        row: "  📌 Отпущенное иначе (#130, vimarsha/hint · подсказка, An/At/Vs, v4) · released — Tail…",
+      },
+    ],
+  });
+  assert.deepEqual(sliceIn(text).split("\n").slice(1, -1), [
+    "  📌 Правило в силе (#31) — Фрагмент",
+  ]);
+});
+
 // A full page holds rows the rule parser skips (a released node's form): the page is still full,
 // the foot still names the next page — the cut is the server's page, not the parsed rules.
 test("iskron_stand: a full page with an unparsed row — the foot names the next page", async (t) => {
