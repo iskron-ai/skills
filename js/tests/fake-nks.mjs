@@ -370,6 +370,9 @@ export async function startFakeNks(opts = {}) {
     sessionFollowsToken: opts.sessionFollowsToken ?? false,
     silentNewSession: opts.silentNewSession ?? false,
     ignoreStandingHeader: opts.ignoreStandingHeader ?? false, // поверхность старше автопривязки: заголовок молча пропускается
+    // Знак автопривязки в ответе рукопожатия (nks-mcp 0.160.0): сервер, принявший заголовок,
+    // говорит под «<продукт>/standing» { bound, opened?, … }. null — сервер старше знака: ключа нет.
+    standingSign: opts.standingSign ?? null,
     standingRefuseNext: 0, // столько ближайших register отказать проходящим отказом
     standingRefuseDelayMs: 0, // и так долго держать ответ этого отказа
     standingSeatGoneNext: 0, // столько ближайших register отказать словами «места нет» — сиденье истекло
@@ -1385,13 +1388,17 @@ export async function startFakeNks(opts = {}) {
         // Автопривязка стояния при открытии сессии (#3800 в nks-dev): заголовок
         // «граф карта имя» привязывает сессию прежде ответа на рукопожатие.
         const hdr = req.headers["x-nks-standing"];
+        let byHeader = false; // заголовок принят: сессия привязана им
         if (hdr && !st.ignoreStandingHeader) {
           const parts = String(hdr).trim().split(/\s+/);
           if (parts.length === 3) {
             registerPlace(fresh, parts[0], parts[1], parts[2]);
             st.counts.header_binds++;
+            byHeader = true;
           }
         }
+        // Знак привязки — только от сервера, принявшего заголовок; без заголовка ключа нет.
+        const sign = byHeader && st.standingSign ? st.standingSign : null;
         return json(
           res,
           200,
@@ -1400,7 +1407,7 @@ export async function startFakeNks(opts = {}) {
             id: msg.id,
             result: {
               protocolVersion: "2025-06-18",
-              capabilities: {},
+              capabilities: sign ? { experimental: { "iskron/standing": sign } } : {},
               serverInfo: { name: "fake-nks", version: st.serverVersion },
             },
           },

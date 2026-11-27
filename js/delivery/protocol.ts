@@ -43,6 +43,13 @@ export const SPAWN_LINE = `${PRODUCT}/spawned_for:`;
 export const HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 /**
+ * Ключ `capabilities.experimental` ответа сервера на initialize, открытый заголовком стояния:
+ * им поверхность nks-mcp 0.160.0 говорит, привязала ли она сессию этим заголовком
+ * (`{ bound, opened?, … }`; граф @nks/nks-dev, узел #11403). Без заголовка ключа нет.
+ */
+export const STANDING_CAPABILITY = `${PRODUCT}/standing`;
+
+/**
  * Ключи протокола сервера, которые из имени продукта не выводятся: их значение
  * называет поверхность своего сервера (отказ api — `_meta[refusal]`).
  */

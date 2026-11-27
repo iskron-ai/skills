@@ -50,6 +50,7 @@ export {
   SERVER_LOCALE,
   serverProtocol,
   SPAWN_LINE,
+  STANDING_CAPABILITY,
   STRUCTURED_CAPABILITY,
   tool,
   TOOL_PREFIX,
