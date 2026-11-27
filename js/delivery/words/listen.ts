@@ -14,7 +14,13 @@ export interface ListenWords {
   self: (pi: boolean) => string;
   claude: (monitor: string, exit: string) => string;
   codexLine: (codex: string, exit: string) => string;
-  any: (monitor: string, exit: string, codex: string) => string;
+  /**
+   * Antigravity CLI (agy): его уведомления MCP спящую сессию не будят — будит фоновый
+   * run_command с watchdog-exit (граф @nks/nks-dev, узел #11439).
+   */
+  agy: (self: string, key: string, where: string) => string;
+  agyLine: (agy: string) => string;
+  any: (monitor: string, exit: string, codex: string, agy: string) => string;
 }
 
 export const LISTEN: Readonly<Record<Lang, ListenWords>> = {
@@ -37,7 +43,10 @@ export const LISTEN: Readonly<Record<Lang, ListenWords>> = {
       `Слушает ${pi ? "расширение pi" : "плагин OpenCode"} само — сторож не нужен, кадры входят в ход.`,
     claude: (monitor, exit) => `Слушать: ${monitor}; без Monitor — ${exit}.`,
     codexLine: (codex, exit) => `Слушать: ${codex}; без двери app-server — ${exit}.`,
-    any: (monitor, exit, codex) => `Слушать: ${monitor}; ${exit}; ${codex}.`,
+    agy: (self, key, where) =>
+      `в Antigravity CLI (agy) уведомления MCP спящую сессию не будят — держи фоновой run_command (WaitMsBeforeAsync=500, IsDaemon=false, NotificationTimeoutSeconds большой или пустой): node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении, его концом agy и просыпается); перевзводи после каждого выхода`,
+    agyLine: (agy) => `Слушать: ${agy}.`,
+    any: (monitor, exit, codex, agy) => `Слушать: ${monitor}; ${exit}; ${codex}; ${agy}.`,
   },
   en: {
     block: (listen) =>
@@ -58,6 +67,9 @@ export const LISTEN: Readonly<Record<Lang, ListenWords>> = {
       `The ${pi ? "pi extension" : "OpenCode plugin"} listens itself — no watchdog needed, frames enter the turn.`,
     claude: (monitor, exit) => `Listen: ${monitor}; without Monitor — ${exit}.`,
     codexLine: (codex, exit) => `Listen: ${codex}; without the app-server door — ${exit}.`,
-    any: (monitor, exit, codex) => `Listen: ${monitor}; ${exit}; ${codex}.`,
+    agy: (self, key, where) =>
+      `in Antigravity CLI (agy) MCP notifications do not wake a sleeping session — keep a background run_command (WaitMsBeforeAsync=500, IsDaemon=false, NotificationTimeoutSeconds large or empty): node "${self}" watchdog-exit ${key}${where} (it exits zero on the first message, and by that exit agy wakes); re-arm it after every exit`,
+    agyLine: (agy) => `Listen: ${agy}.`,
+    any: (monitor, exit, codex, agy) => `Listen: ${monitor}; ${exit}; ${codex}; ${agy}.`,
   },
 };

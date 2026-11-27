@@ -43,12 +43,17 @@ function listenLine(key: string): string {
   const monitor = W.monitor(self, key, where);
   const exit = W.exit(self, key, where);
   const codex = W.codex(self, key, where);
+  const agy = W.agy(self, key, where);
   // claude-code observed in the Claude Code handshake; Codex by substring, its handshake not observed.
+  // agy (#11439) by either spelling, its handshake not observed either — so the line for an
+  // unknown harness carries its recipe too.
   return NOTIFIED_CLIENTS.has(client)
     ? W.self(client === PI_CLIENT)
     : client === "claude-code"
       ? W.claude(monitor, exit)
       : /codex/i.test(client)
         ? W.codexLine(codex, exit)
-        : W.any(monitor, exit, codex);
+        : /antigravity|\bagy\b/i.test(client)
+          ? W.agyLine(agy)
+          : W.any(monitor, exit, codex, agy);
 }
