@@ -122,6 +122,7 @@ var ID_PREFIX = `${PRODUCT}-`;
 var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var SPAWN_LINE = `${PRODUCT}/spawned_for:`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
+var STANDING_CAPABILITY = `${PRODUCT}/standing`;
 
 // js/delivery/spawned-for.ts
 var SPAWNED_FOR_ENV = envName("SPAWNED_FOR");
@@ -137,6 +138,12 @@ var TAKE = {
 };
 
 // js/delivery/words/frame-text.ts
+function openCard(lang2, c) {
+  const ru = lang2 === "ru";
+  const role = c.karta === null ? null : `${ru ? "роль" : "role"} ${c.karta}`;
+  const who = c.standing && role ? `${c.standing} (${role})` : c.standing ?? role ?? (ru ? "неизвестно кто" : "unknown");
+  return ru ? `  №${c.room} [${c.entry}], ключ ${c.key}: спросил ${who}, с ${c.askedAt}` : `  №${c.room} [${c.entry}], key ${c.key}: asked by ${who}, since ${c.askedAt}`;
+}
 function clockNotice(lang2, kind, f) {
   const ru = lang2 === "ru";
   const unknown = ru ? "неизвестно" : "unknown";
@@ -152,6 +159,8 @@ var FRAME_TEXT = {
     clockNotice: (kind, facts) => clockNotice("ru", kind, facts),
     cardRepeat: (n) => `повтор карточки: ${n ?? "номер неизвестен"}`,
     openCards: (count, oldest, malformed = false) => `карточек без ответа: ${count ?? "неизвестно"}${oldest ? `; старшая с ${oldest}` : ""}${malformed ? " (неверное my_open_cards)" : ""}`,
+    openCard: (c) => openCard("ru", c),
+    cardsMalformed: (n) => `  карточек неверной формы не показано: ${n} (my_open_cards.items)`,
     myCases: () => `${tool("case")}(action="mine"), затем read каждого`,
     frame: (id) => `кадр ${id}`,
     yoursBelow: () => ` — адресованные строками ниже; `,
@@ -176,6 +185,8 @@ var FRAME_TEXT = {
     clockNotice: (kind, facts) => clockNotice("en", kind, facts),
     cardRepeat: (n) => `card repeat: ${n ?? "number unknown"}`,
     openCards: (count, oldest, malformed = false) => `unanswered cards: ${count ?? "unknown"}${oldest ? `; oldest since ${oldest}` : ""}${malformed ? " (invalid my_open_cards)" : ""}`,
+    openCard: (c) => openCard("en", c),
+    cardsMalformed: (n) => `  malformed cards not shown: ${n} (my_open_cards.items)`,
     myCases: () => `${tool("case")}(action="mine"), then read each`,
     frame: (id) => `frame ${id}`,
     yoursBelow: () => ` — yours in the lines below; `,
@@ -452,11 +463,13 @@ var TURNED_EN = `${TWO_ENTRIES_EN} Otherwise ${TAKE_PATH_EN}.`;
 var TURN = {
   ru: {
     wake: () => `${FRAME_MARK} человека в консоли нет: ход и исход — ${tool("case")} line по ключу; say с to — за ответом или действием; человеку ask или ответ на его вопрос. Нечего передать — ход кончен, без текста.`,
-    notLaid: (session, why) => `слово конца хода в сессию ${session} не легло: ${why}`
+    notLaid: (session, why) => `слово конца хода в сессию ${session} не легло: ${why}`,
+    logged: (session, text2) => `слово конца хода сессии ${session} — в журнал, ход плагин не открывает: ${text2}`
   },
   en: {
     wake: () => `${FRAME_MARK} no human at the console: progress and outcome — ${tool("case")} line by key; say with to for a reply or action; to the human — ask or answer their question. Nothing to pass on — the turn is over, no text needed.`,
-    notLaid: (session, why) => `the turn's end word did not enter session ${session}: ${why}`
+    notLaid: (session, why) => `the turn's end word did not enter session ${session}: ${why}`,
+    logged: (session, text2) => `the turn's end word of session ${session} — to the log, the plugin opens no turn: ${text2}`
   }
 };
 
@@ -480,6 +493,7 @@ var WATCHDOG = {
     seatNotBack: (s, path) => `место не вернулось за ${s}s после смены демона — сокет ${path} не поднят; вернуть — iskron_stand`,
     noSocket: (path, s) => `мост не поднял локальный сокет ${path} за ${s}s`,
     bridgeReleasedSocket: (text2) => `мост отпустил сокет: ${text2}`,
+    sessionEnded: (text2) => `сессия агента кончена — сторож уходит, ход больше не открывается: ${text2}`,
     notWakeup: (type) => `кадр ${type ?? "не разобран"} — не повод будить`,
     seenEarlier: (id) => `кадр ${id} уже отдан прежним взводом — не повод будить`,
     unaddressed: () => "пачка без адресованных месту — счёт ждёт ближайшей побудки",
@@ -498,7 +512,8 @@ var WATCHDOG = {
     doorClosed: (why, lost) => `дверь закрылась: ${why} — открою заново на следующем кадре` + (lost ? `; без ответа: ${lost} — вернутся из кольца следующим взводом` : ""),
     doorNotOpened: (why) => `дверь не открылась: ${why}`,
     noIdFromRing: () => "кадр без id из кольца — пометить нечем, в тред не кладу повторно",
-    alreadyPut: (id) => `кадр ${id} уже вложен — в тред не кладу повторно`
+    alreadyPut: (id) => `кадр ${id} уже вложен — в тред не кладу повторно`,
+    deferred: (id, s) => `кадр ${id} отложен — не прерываю идущий ход: в тред через ${s}s или со следующим прерывающим кадром`
   },
   en: {
     doer: (text2) => `DOER: ${text2}`,
@@ -512,6 +527,7 @@ var WATCHDOG = {
     seatNotBack: (s, path) => `the seat did not return within ${s}s after the daemon change — socket ${path} is not up; to bring it back use iskron_stand`,
     noSocket: (path, s) => `the bridge did not bring up the local socket ${path} within ${s}s`,
     bridgeReleasedSocket: (text2) => `the bridge released the socket: ${text2}`,
+    sessionEnded: (text2) => `the agent's session has ended — the watchdog leaves, no turn opens any more: ${text2}`,
     notWakeup: (type) => `frame ${type ?? "unparsed"} — not a reason to wake`,
     seenEarlier: (id) => `frame ${id} was already delivered by an earlier arming — not a reason to wake`,
     unaddressed: () => "a batch with nothing addressed to the seat — the count waits for the next wake-up",
@@ -530,7 +546,8 @@ var WATCHDOG = {
     doorClosed: (why, lost) => `the door closed: ${why} — will reopen on the next frame` + (lost ? `; unanswered: ${lost} — will come back from the ring on the next arming` : ""),
     doorNotOpened: (why) => `the door did not open: ${why}`,
     noIdFromRing: () => "a frame without an id from the ring — nothing to mark it with, not putting it into the thread again",
-    alreadyPut: (id) => `frame ${id} was already put in — not putting it into the thread again`
+    alreadyPut: (id) => `frame ${id} was already put in — not putting it into the thread again`,
+    deferred: (id, s) => `frame ${id} deferred — not interrupting the running turn: into the thread in ${s}s or with the next interrupting frame`
   }
 };
 
@@ -1144,12 +1161,23 @@ var COMPACT = new RegExp(
 var CARDS = new RegExp(
   `(?:${LANGS.flatMap((lang2) => {
     const T = FRAME_TEXT[lang2];
-    return [
+    const count = [
       esc(flat(T.openCards(null, null))),
       esc(flat(T.openCards(null, null, true))),
       esc(flat(T.openCards(N, null))).replace(NUM, String.raw`\d+`),
       esc(flat(T.openCards(N, ARGS))).replace(NUM, String.raw`\d+`).replace(ARGS, String.raw`[0-9T:.+Z-]+`)
     ];
+    const askers = [
+      [ARGS, N],
+      [ARGS, null],
+      [null, N],
+      [null, null]
+    ];
+    const card = askers.map(
+      ([standing, karta]) => esc(flat(T.openCard({ room: N, entry: N, key: ARGS, standing, karta, askedAt: ARGS }))).replace(NUM, String.raw`\d+`).replaceAll(ARGS, ".+?")
+    );
+    const malformed = esc(flat(T.cardsMalformed(N))).replace(NUM, String.raw`\d+`);
+    return [`(?:${count.join("|")})(?:${card.join("|")})*(?:${malformed})?`];
   }).join("|")})$`
 );
 function quiet(text2) {
