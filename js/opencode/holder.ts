@@ -136,7 +136,7 @@ export function served(slot: Slot, touch: boolean): Slot {
 }
 
 /**
- * An explicit stand of the seat the slot holds, come to an instance that does not hold it: the
+ * An explicit stand of the seat the slot holds NOW, come to an instance that does not hold it: the
  * holder's word instead of a register — a register would stand a second name beside the
  * session's seat. The model names the session's model and changes nothing here. A busy line, a
  * satellite's stand, a local recovery and a call doing more than standing — a name, a room, a
@@ -149,6 +149,8 @@ export async function alreadyStands(
   foreign: boolean,
 ): Promise<string | null> {
   if (!foreign || args.context_restored === true || args.satellite_of != null) return null;
+  // A place kept after a stop or a release is no seat: the stand goes to the holder's bridge.
+  if (!slot.holding || !slot.place || slot.bridge.failure) return null;
   if (Object.keys(args).some((k) => !["realm", "karta", "model"].includes(k))) return null;
   if (typeof args.status === "string" || takingArgs(args).some((k) => k !== "model")) return null;
   const realm = String(args.realm ?? "").trim();
