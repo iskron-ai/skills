@@ -1005,6 +1005,12 @@ export async function startFakeNks(opts = {}) {
       if ("connect_refuse_rule" in patch) st.connectRefuseRule = patch.connect_refuse_rule; // правило этого отказа в _meta (под structured)
       if ("unattributed_rule" in patch) st.unattributedRule = patch.unattributed_rule; // правило отказа безавторному send (под structured)
       if (patch.unbind) st.standings.clear(); // привязки сессий к каналам потеряны, каналы и места целы
+      // Every handshake waits until the probe lets go (init_hold: false): which ones meet each other
+      // at the bridge's return gate is the probe's choice, not the machine's speed.
+      if ("init_hold" in patch && !patch.init_hold) {
+        st.initRelease?.();
+        st.initHold = null;
+      } else if (patch.init_hold) st.initHold ??= new Promise((r) => (st.initRelease = r));
       if ("connect_delay_ms" in patch) st.connectDelayMs = Number(patch.connect_delay_ms) || 0;
       // Адрес повёрнут и прежний сокет места закрыт 4000 сразу, а ответ connect — позже (#6706).
       if ("connect_reply_delay_ms" in patch)
@@ -1329,6 +1335,7 @@ export async function startFakeNks(opts = {}) {
           return res.end("upstream down");
         }
         if (st.initDelayMs) await new Promise((r) => setTimeout(r, st.initDelayMs));
+        if (st.initHold) await st.initHold;
       }
       if (sid && st.dead.has(sid) && msg.method === "initialize") {
         // Как на бою: рукопожатие под закрытой сессией — 404 unknown_session, сколько
