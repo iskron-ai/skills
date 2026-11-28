@@ -176,7 +176,13 @@ async function machine(t, fn) {
     const b = startBridge(door.url, dir);
     bridges.push(b);
     assert.ok((await b.call("initialize", 1, INIT)).result, "precondition: a session is open");
+    // The bridge forwards the notification on its own time: one landing after the probe set the
+    // door down would be a knock of the setup counted as the probe's (or open the window itself).
+    const initialized = () => door.knocks.filter((m) => m === "notifications/initialized").length;
+    const seen = initialized();
     b.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    for (const end = Date.now() + 15_000; initialized() === seen; await pause(20))
+      assert.ok(Date.now() < end, "precondition: the bridge forwarded notifications/initialized");
     return b;
   };
   await fn({ door, dir, seat });
