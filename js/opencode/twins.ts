@@ -72,18 +72,9 @@ export function heldInProcess(root: string): Slot | null {
   return null;
 }
 
-/**
- * A slot holding the root's seat in ANOTHER instance of this process (holder.ts, #11463): a
- * session speaks with at most one seat, and the holder's slot serves the root's calls that
- * reach this instance. The instance's own slot — mine — is never the answer.
- */
-export function heldElsewhere(root: string, mine: Slot | undefined): Slot | null {
-  for (const t of registry()) {
-    const s = t.holds(root);
-    if (s && s !== mine) return s;
-  }
-  return null;
-}
+/** An instance of that spelling is live in this process: a root moved there is handed to it (reserve.ts). */
+export const spellingUp = (h: Home): boolean =>
+  [...registry()].some((t) => t.home && sameSpelling(t.home, h));
 
 /** A root's service seating in flight in an instance of this process (rootseat-tools.ts). */
 export interface Seating {

@@ -45,6 +45,8 @@ export interface OpencodeKeepWords {
   alreadyStanding: (name: string, realm: string, karta: string) => string;
   takenFromNew: (session: string) => string;
   parentMoved: () => string;
+  /** seconds — when to call again. */
+  rootElsewhere: (seconds: number) => string;
   farRefusal: () => string;
   elsewhereDevice: (device: string) => string;
   /** why — слово моста, почему кода нет, либо пусто. */
@@ -116,6 +118,9 @@ export const OPENCODE_KEEP: Readonly<Record<Lang, OpencodeKeepWords>> = {
     parentMoved: () =>
       `Отказано (плагин): родитель этой сессии перенесён в другую папку — ` +
       "мост родителя здесь не поднимается, а своего места у неё нет; работа этой сессии — дальше без графа, либо слово запустившему.",
+    rootElsewhere: (seconds) =>
+      "Отказано (плагин): место корня держит другой экземпляр плагина и ещё не ответил — " +
+      `повтори через ${seconds} с; своего моста этот вызов не поднимал.`,
     farRefusal: () =>
       "Отказано (плагин): эта дочерняя сессия перенесена в другой каталог, чем её родитель, а место родителя " +
       "не держит ни один экземпляр плагина этого процесса OpenCode — родитель в другом процессе либо места не держит. " +
@@ -207,6 +212,9 @@ export const OPENCODE_KEEP: Readonly<Record<Lang, OpencodeKeepWords>> = {
     parentMoved: () =>
       "Refused (plugin): this session's parent was moved to another folder — " +
       "the parent's bridge is not raised here, and it has no seat of its own; this session's work goes on without the graph, or by a word to the launcher.",
+    rootElsewhere: (seconds) =>
+      "Refused (plugin): the root's seat is held by another instance of the plugin, which has not answered yet — " +
+      `retry in ${seconds} s; this call raised no bridge of its own.`,
     farRefusal: () =>
       "Refused (plugin): this child session was moved to a different directory than its parent, and the parent's seat " +
       "is held by no plugin instance of this OpenCode process — the parent is in another process or holds no seat. " +

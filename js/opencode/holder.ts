@@ -2,9 +2,9 @@
 // contract of #6550: a session speaks with at most one seat). OpenCode loads the plugin once per
 // location, and a session moved to another folder (moves.ts) may have the calls of its running
 // turn reach the previous folder's instance. Before an instance stands, returns or opens a
-// bridge for a ROOT, it asks the process (twins.ts): the slot of another instance holding the
-// root's seat serves the call — no second bridge, no second name. A seating in flight in another
-// instance is waited for first: two instances seating one root stand two seats.
+// bridge for a ROOT, it takes the process's reservation of the root (reserve.ts): the slot of the
+// instance owning it serves the call — no second bridge, no second name. A seating in flight in
+// another instance is waited for first: two instances seating one root stand two seats.
 import { OPENCODE_KEEP, PLUGIN } from "../delivery/index.ts";
 import { takingArgs } from "../shared/busyargs.ts";
 import { words } from "../shared/lang.ts";
@@ -12,9 +12,11 @@ import { authDir, textOf } from "./bridge-io.ts";
 import type { Keeper } from "./keep.ts";
 import { writeLostMarker } from "./marker.ts";
 import type { Home } from "./records.ts";
+import { ownerSlot, type Reservation, reserveRoot, setSlot, unready, waitMs } from "./reserve.ts";
 import { heldAs } from "./rootseat-by.ts";
+import { STAND_TOOL } from "./satellite.ts";
 import type { Slot } from "./slot.ts";
-import { adoptIn, heldElsewhere, seatClaim, seatingElsewhere, slotOwners } from "./twins.ts";
+import { adoptIn, seatClaim, seatingElsewhere, slotOwners } from "./twins.ts";
 
 export function owned(slot: Slot, slots: Map<string, Slot>): void {
   slotOwners().set(slot, slots);
@@ -48,16 +50,62 @@ export function foreignAnswer(result: unknown, name: string): { content: string 
 }
 
 /**
- * The slot of ANOTHER instance of this process holding the root's seat; null — none, or this
- * instance holds it itself. slots — this instance's slots: its own seat is not the answer, and
- * its own seating in flight is not waited for.
+ * The root's slot under the process's reservation (reserve.ts), taken synchronously at the call:
+ * this instance's own by `own`, or the slot of the instance that owns the root — after its
+ * seating in flight, if any. The owner's slot not set in time: a refusal aloud, the reservation
+ * untouched — the waiter never becomes a second owner.
  */
-export async function holderOf(root: string, slots: Map<string, Slot>): Promise<Slot | null> {
-  const mine = slots.get(root);
-  if (mine?.holding && mine.place && !mine.bridge.failure) return null;
-  await seatingElsewhere(root, slots);
-  return heldElsewhere(root, mine);
+export async function rootSlot(
+  root: string,
+  slots: Map<string, Slot>,
+  home: Home | null,
+  own: (r: Reservation) => Promise<Slot>,
+  touch: boolean,
+): Promise<Slot> {
+  for (;;) {
+    const r = reserveRoot(root, slots, home);
+    if (r.owner === slots)
+      try {
+        return await own(r);
+      } finally {
+        unready(r, slots);
+      }
+    const slot = await ownerSlot(r);
+    if (slot === null)
+      throw new Error(words(OPENCODE_KEEP).rootElsewhere(Math.ceil(waitMs() / 1000)));
+    if (slot) {
+      await seatingElsewhere(root, slots);
+      return served(slot, touch);
+    }
+  }
 }
+
+/**
+ * The owner of the root's reservation set its slot: the waiting instances are served through it.
+ * A fresh slot returns no seat while another instance's seating of the root is in flight — two
+ * seatings stand two seats; the owner waits for it only after it opened its slot to the waiters.
+ */
+export async function ownerSet(
+  r: Reservation,
+  slot: Slot,
+  slots: Map<string, Slot>,
+  fresh: boolean,
+): Promise<void> {
+  setSlot(r, slot);
+  if (fresh) await seatingElsewhere(r.root, slots);
+}
+
+/** An explicit stand of the seat another instance's slot holds for the root: its word (alreadyStands). */
+export const keptStand = async (
+  name: string,
+  slot: Slot,
+  session: string,
+  args: Record<string, unknown>,
+  slots: Map<string, Slot>,
+): Promise<string | null> =>
+  name === STAND_TOOL && slot.session === session
+    ? alreadyStands(slot, session, args, foreign(slot, slots))
+    : null;
 
 /** A call goes through the holder's slot: counted as its call, and known as not this instance's. */
 export function served(slot: Slot, touch: boolean): Slot {

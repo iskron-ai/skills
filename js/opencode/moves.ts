@@ -16,9 +16,10 @@ import { channelEnds } from "./leadends.ts";
 import { writeLostMarker } from "./marker.ts";
 import type { Context } from "./plugin.ts";
 import type { Home } from "./records.ts";
+import { handRoot } from "./reserve.ts";
 import type { Slot } from "./slot.ts";
 import type { Say } from "./tools.ts";
-import { heldInProcess } from "./twins.ts";
+import { heldInProcess, spellingUp } from "./twins.ts";
 
 /** How long a live new folder's instance waits for the previous one's move marker. */
 const ADOPT_MS = Number(process.env[envName("MOVE_ADOPT_MS")]) || 1_000;
@@ -83,6 +84,7 @@ export function createMoves(ctx: Context, say: Say) {
       // Children do not move with the parent (OpenCode, observed): a satellite child keeps its own
       // bridge, seat and errand here, in its own folder's instance (#8991); only the root's goes.
       left.set(s, to);
+      handRoot(s, d.slots, to, spellingUp(to)); // the root's reservation goes with it (#11463)
       // The root's seat waits for its session in the new folder: an announced absence, not a death (#7493).
       return d.forget(s, "away");
     }

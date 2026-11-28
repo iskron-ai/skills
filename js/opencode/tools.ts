@@ -34,6 +34,7 @@ import { type PutDown } from "./putdown.ts";
 import { startReaper } from "./reaper.ts";
 import { revokeAsLauncher } from "./release.ts";
 import { toldAside, wireNotes } from "./replynotes.ts";
+import { type Reservation } from "./reserve.ts";
 import { canonOf, type SeatAnswer } from "./rootseat-by.ts";
 import { createSeatLife, explicitHeld } from "./rootseat-tools.ts";
 import { childWriteRefusal, createRunEnds, declaresAction, readsOnly } from "./runends.ts";
@@ -210,6 +211,13 @@ export async function setupTools(
   async function slotFor(sessionID: string, touch = true): Promise<Slot> {
     seats.guard(sessionID);
     const root = await rootOf(sessionID);
+    if (root !== sessionID) return slotOf(sessionID, root, touch, null);
+    // One owner per root across the process (#11463): reserved before any other wait (reserve.ts).
+    const own = (r: Reservation) => slotOf(sessionID, root, touch, r);
+    return holder.rootSlot(root, slots, home, own, touch).then((s) => (seats.guard(sessionID), s));
+  }
+
+  async function slotOf(sessionID: string, root: string, touch: boolean, r: Reservation | null) {
     // A child that stood as its own satellite goes by its own bridge (#5154); the root's is read-only to it (#6550 item 2).
     if (root !== sessionID && !slots.has(sessionID)) {
       adopt.now(); // a previous instance's marker laid after our load (adopt.ts)
@@ -227,18 +235,11 @@ export async function setupTools(
     mv.guard(root, sessionID);
     // A child moved to another directory (#6695): decided on every call, not by slot.
     const far = root !== sessionID && !slots.get(root)?.place ? await mv.farRoot(root) : null;
-    // One seat per root across the process (#11463): the slot of the instance holding it serves the root.
-    const other = root === sessionID ? await holder.holderOf(root, slots) : null;
     seats.guard(sessionID);
     if (far && far !== "foreign") return far;
-    if (other) return holder.served(other, touch);
+    const dead = slots.get(root)?.bridge.failure ? slots.get(root) : undefined;
+    if (dead) slots.delete(root);
     let slot = slots.get(root);
-    let dead: Slot | undefined;
-    if (slot?.bridge.failure) {
-      dead = slot;
-      slots.delete(root);
-      slot = undefined;
-    }
     if (!slot) {
       slot = spare && !spare.bridge.failure ? spare : spawn();
       spare = null;
@@ -250,8 +251,9 @@ export async function setupTools(
       holder.owned(slot, slots);
       unasked.add(slot);
     }
-    // Claims bind session identity without returning an old place; ordinary roots return by directory.
     const s = slot;
+    if (r) await holder.ownerSet(r, s, slots, unasked.has(s)); // the root's owner (reserve.ts)
+    // Claims bind session identity without returning an old place; ordinary roots return by directory.
     if (far !== "foreign" && unasked.delete(s) && !closed(root)) {
       s.resume = (
         claiming(root)
@@ -364,11 +366,7 @@ export async function setupTools(
     const args: Record<string, unknown> = { ...(input ?? {}) };
     const held = launchBasis(sessionID, name, args, !!slot.holding);
     if (held) return { content: held };
-    // An explicit stand of the seat another instance's slot holds for the root: its word, no register (#11463).
-    const kept =
-      name === STAND_TOOL &&
-      slot.session === sessionID &&
-      (await holder.alreadyStands(slot, sessionID, args, holder.foreign(slot, slots)));
+    const kept = await holder.keptStand(name, slot, sessionID, args, slots); // no register (#11463)
     if (kept) return { content: kept };
     // One seat per bridge: a child standing by its own call gets its own bridge (#5154).
     if (standsBy(name, args) && slot.session !== sessionID) {
