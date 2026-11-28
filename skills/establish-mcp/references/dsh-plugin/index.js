@@ -166,7 +166,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.16.8";
+var VERSION = "8.16.9";
 
 // js/delivery/words/asks.ts
 var ASK = {
