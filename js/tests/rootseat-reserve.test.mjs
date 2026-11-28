@@ -58,17 +58,23 @@ test(
   "the root handed to a live folder's instance that has not taken it yet: the old instance's call waits, then refuses aloud — no bridge, no seat of its own",
   T,
   async (t) => {
-    const x = await seated(t, { ISKRON_ROOT_WAIT_MS: "1500" });
+    // The hand-over stays untaken for twice the wait: room for a loaded machine's steps below.
+    const x = await seated(t, { ISKRON_ROOT_WAIT_MS: "5000" });
     await liveIn(x);
+    const old = globalThis.__iskronRoots?.get("root")?.slot?.bridge.proc;
+    assert.ok(old, "the old folder's instance holds the root by its bridge");
     x.ocA.move("root", x.b); // the new folder's instance gets no session.moved of its own yet
     await until(() => markers(x.s.dir).length === 1, "the old folder's instance laid the marker");
     await until(() => heardSeats(x.s.fake).length === 0, "the old folder's seat put down away");
+    // The bridge put down away exits on its own time: counted before it is gone, it would leave.
+    await until(() => old.exitCode !== null || old.signalCode !== null, "the old bridge exited");
     await listed(x.ocA, STAND);
-    const before = bridges();
+    const [before, spawned] = [bridges(), globalThis.__iskronProbeSpawned];
     const r = await call(x, x.ocA, STAND);
     await sleep(1_000);
     assert.ok(r.error && REFUSED.test(r.error), `a refusal aloud: ${r.error ?? r.content}`);
     assert.deepEqual(stood(x), [], "no seat stood by the refused call");
+    assert.equal(globalThis.__iskronProbeSpawned, spawned, "no bridge spawned by the refused call");
     assert.equal(bridges(), before, "no bridge raised by the refused call");
   },
 );

@@ -16,7 +16,6 @@ import {
   liveIn,
   markers,
   seated,
-  sleep,
   stand,
   stood,
   WRITE,
@@ -26,11 +25,21 @@ const T = { timeout: 90_000 };
 const ORIENT = { tool: "iskron_orient", input: {} };
 const roots = () => globalThis.__iskronRoots ?? new Map();
 const reserved = (ids) => ids.filter((id) => roots().has(id));
-/** A read of each session through the instance: each root reserved by it. */
+/** How long a loaded machine may take the reaper's steps (its interval is 100 ms here). */
+const REAPED_MS = 15_000;
+/** The reaper's idle term — set per instance: it must not leak into the next probe's instance. */
+const REAPER = { ISKRON_BRIDGE_IDLE_MS: "300", ISKRON_BRIDGE_REAP_MS: "100" };
+/**
+ * A read of each session through the instance: each root reserved by it — seen at the call's
+ * end, before the reaper's next step (a slot idles from the call's end; a loaded machine may
+ * reap the first before the last call is out).
+ */
 async function touch(oc, ids) {
   await listed(oc, ORIENT);
-  for (const sessionID of ids)
+  for (const sessionID of ids) {
     await oc.tools().get(ORIENT.tool).execute({}, { sessionID, agent: "build", messageID: "m" });
+    assert.ok(roots().has(sessionID), `${sessionID} reserved by its first call`);
+  }
 }
 async function one(t, env = {}) {
   const x = await stand(t);
@@ -39,25 +48,25 @@ async function one(t, env = {}) {
   const ids = ["life-1", "life-2", "life-3"];
   for (const id of ids) x.ocA.create(id, { emit: false });
   await touch(x.ocA, ids);
-  assert.deepEqual(reserved(ids), ids, "each root reserved by its first call");
   return { x, ids };
 }
 
 test("the reaper drops idle roots' slots: their reservations go too", T, async (t) => {
-  const { ids } = await one(t, { ISKRON_BRIDGE_IDLE_MS: "300", ISKRON_BRIDGE_REAP_MS: "100" });
-  await sleep(1_200);
-  assert.deepEqual(reserved(ids), [], "no reservation outlives its reaped slot");
+  const { ids } = await one(t, REAPER);
+  const gone = () => reserved(ids).length === 0;
+  await until(gone, "no reservation outlives its reaped slot", REAPED_MS);
 });
 
 test("the instance stops: its roots' reservations go with its slots", T, async (t) => {
   const { x, ids } = await one(t);
+  assert.deepEqual(reserved(ids), ids, "each root reserved, no reaper here");
   await x.ocA.stop();
   assert.deepEqual(reserved(ids), [], "no reservation outlives the stopped instance");
 });
 
 test("an old owner's drop leaves a newer owner's reservation intact", T, async (t) => {
-  const { x } = await one(t, { ISKRON_BRIDGE_IDLE_MS: "300", ISKRON_BRIDGE_REAP_MS: "100" });
-  await sleep(1_200); // A's slot of life-1 reaped
+  const { x } = await one(t, REAPER);
+  await until(() => !roots().has("life-1"), "A's slot of life-1 reaped", REAPED_MS);
   await liveIn(x);
   x.ocB.create("life-1", { emit: false });
   await touch(x.ocB, ["life-1"]);
@@ -105,10 +114,11 @@ test("a hand-over not taken in time, taken late — the session keeps one seat",
   await liveIn(x);
   x.ocA.move("root", x.b);
   await until(() => markers(x.s.dir).length === 1, "the old folder's instance laid the marker");
-  await sleep(1_000); // the hand-over expired untaken
+  const expired = (r = roots().get("root")) => !r || (!r.owner && Date.now() >= r.until);
+  await until(expired, "the hand-over expired untaken", REAPED_MS);
   await call(x, x.ocA, WRITE); // the running turn's write through the old folder's instance
   x.ocB.move("root", x.b); // the new folder's instance adopts late
-  await sleep(3_000);
+  await until(() => markers(x.s.dir).length === 0, "the late adoption took the marker", REAPED_MS);
   const r = await x.ocB.turn("root", "после переноса", () => [WRITE]);
   assert.deepEqual(heardSeats(x.s.fake), [x.old], "one seat of the role, the root's");
   assert.deepEqual(
