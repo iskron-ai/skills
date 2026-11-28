@@ -1291,18 +1291,22 @@ test("scoped stop: stand in another instance cancels only the pending archive ge
   const a = bridgeEnv("scoped-cross-A"),
     b = bridgeEnv("scoped-cross-B");
   const app = { name: "opencode", version: "2.2.7" };
-  const A = await plugin(a.env, { app, sessions, faults: { updateGate: gate } });
-  const B = await plugin(b.env, { app, sessions, keepMarker: true });
+  // One root has one owner in the process (#11463): the other instance gets it by a move.
+  const A = await plugin(a.env, { app, sessions, location: LOC_A, faults: { updateGate: gate } });
+  const B = await plugin(b.env, { app, sessions, location: LOC_B, keepMarker: true });
   try {
     await serverTools(A);
     await serverTools(B);
     await A.call("iskron_channel", { action: "connect" }, sid);
-    await B.call("iskron_channel", { action: "connect" }, sid);
     appendFileSync(
       `${a.events}.${pidOf(a.log)}`,
       event("stopped", { order: "cross-stop", key: "a", text: "stop" }),
     );
     await until(() => A.archives.length === 1, "old archive in flight");
+    const moved = { type: "session.moved", data: { sessionID: sid, location: LOC_B } };
+    A.emit(moved);
+    B.emit(moved);
+    await B.call("iskron_channel", { action: "connect" }, sid);
     appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "b" }));
     await until(() => /мост держит место b/.test(B.said()), "new explicit stand");
     open();

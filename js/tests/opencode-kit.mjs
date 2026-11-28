@@ -365,6 +365,28 @@ function captureStderr(into) {
   return () => (process.stderr.write = write);
 }
 
+/** Reset per-session state between probes; live twins must be stopped before requesting their reset. */
+export function forgetSessions(twins = false) {
+  for (const k of [
+    "Ended",
+    "EndLiftedAt",
+    "Halts",
+    "LiftedAt",
+    "StopIds",
+    "StopWords",
+    "StopAlone",
+    "StopFull",
+    "ArchivedStops",
+    "ReplyNotes",
+    "Handing",
+    "Seating",
+    ...(twins ? ["Twins"] : []),
+  ])
+    globalThis[`__iskron${k}`]?.clear?.();
+  globalThis.__iskronArchiveQueue?.turns.clear();
+  globalThis.__iskronArchiveQueue?.updating.clear();
+}
+
 /** A loaded plugin: registries in hand, cleanup at hand. */
 export async function plugin(env = {}, ctxOpts = {}) {
   // A plugin stopped with a holding bridge leaves a marker for the next instance
@@ -375,18 +397,7 @@ export async function plugin(env = {}, ctxOpts = {}) {
     // The probes reuse session ids: the process's ended leads go too, and the stop registry
     // with them (№1236, #8240) — it is shared by the process's instances by design, and a
     // stale ban makes the next probe's sweep cut a same-id session before any event of its own.
-    globalThis.__iskronEnded?.clear();
-    globalThis.__iskronEndLiftedAt?.clear();
-    globalThis.__iskronHalts?.clear();
-    globalThis.__iskronLiftedAt?.clear();
-    globalThis.__iskronStopIds?.clear();
-    globalThis.__iskronStopWords?.clear();
-    globalThis.__iskronStopAlone?.clear();
-    globalThis.__iskronStopFull?.clear();
-    globalThis.__iskronArchivedStops?.clear();
-    globalThis.__iskronReplyNotes?.clear(); // the plugin's own words waiting for a tool reply
-    globalThis.__iskronArchiveQueue?.turns.clear();
-    globalThis.__iskronArchiveQueue?.updating.clear();
+    forgetSessions();
   }
   const def = await loadPlugin(env, ctxOpts.pluginFile);
   assert.equal(def.id, "iskron", "the default export must be a definition with an id");

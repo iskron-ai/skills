@@ -286,6 +286,16 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
       };
       for (const cb of hooks["tool.execute.after"] ?? []) await cb(ev);
     },
+    /** A host event to the instance as OpenCode's bus delivers it (session.step.*, …). */
+    emit,
+    /** The session's skill tool loaded the skill: hooks tool.execute.before and .after of one call. */
+    async skill(sessionID, id, status = "completed") {
+      const ev = { tool: "skill", sessionID, agent: "build", messageID: `msg-${++seq}` };
+      Object.assign(ev, { id: `call-${++seq}`, input: { id } });
+      for (const cb of hooks["tool.execute.before"] ?? []) await cb(ev);
+      Object.assign(ev, { status, result: { content: `skill ${id}` } });
+      for (const cb of hooks["tool.execute.after"] ?? []) await cb(ev);
+    },
     remove(id) {
       sessions.delete(id);
       emit({ type: "session.deleted", location: { directory: project }, data: { sessionID: id } });
