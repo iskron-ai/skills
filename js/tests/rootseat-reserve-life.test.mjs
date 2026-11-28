@@ -67,6 +67,39 @@ test("an old owner's drop leaves a newer owner's reservation intact", T, async (
   assert.ok(newer?.slot && !newer.slot.bridge.failure, "with its live slot");
 });
 
+// A guard: the owner's replacement of its dead bridge drops and puts back the reservation in one
+// synchronous step (setSlot) — no other instance's call may take the root in between.
+test(
+  "the owner's bridge dies and is replaced under concurrent writes — one reservation, one seat, every write the root's",
+  T,
+  async (t) => {
+    const x = await seated(t);
+    await liveIn(x);
+    const before = roots().get("root");
+    const dead = before?.slot;
+    assert.ok(dead && !dead.bridge.failure, "the root reserved by A with its live slot");
+    dead.bridge.proc.kill("SIGKILL"); // the owner's bridge dies, not by the plugin's stop
+    await until(() => dead.bridge.failure, "the owner's bridge is dead");
+    const writes = x.s.fake.state.writes.length;
+    const [a, b] = await Promise.all([
+      x.ocA.turn("root", "после смерти моста", () => [WRITE]),
+      call(x, x.ocB, WRITE),
+    ]);
+    const r = roots().get("root");
+    assert.equal(r, before, "the same reservation survives the replacement");
+    assert.ok(r.slot !== dead && !r.slot.bridge.failure, "with the owner's new live slot");
+    assert.deepEqual(heardSeats(x.s.fake), [x.old], "one seat of the role, the root's");
+    assert.deepEqual(
+      [...new Set(stood(x))].filter((n) => n !== x.old),
+      [],
+      "no other name",
+    );
+    const authors = x.s.fake.state.writes.slice(writes).map((w) => w.author);
+    const errors = `A: ${a.calls[0]?.error ?? "ok"}; B: ${b.error ?? "ok"}`;
+    assert.deepEqual(authors, [x.old, x.old], `both writes signed by the root: ${errors}`);
+  },
+);
+
 test("a hand-over not taken in time, taken late — the session keeps one seat", T, async (t) => {
   const x = await seated(t, { ISKRON_ROOT_WAIT_MS: "300" });
   await liveIn(x);
