@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.16.9](https://github.com/iskron-ai/skills/compare/v8.16.8...v8.16.9) (2026-11-28)
+
+
+### Bug Fixes
+
+* **opencode:** a root session moved to another folder keeps one seat across the process ([#11463](https://github.com/iskron-ai/skills/issues/11463)) ([#923](https://github.com/iskron-ai/skills/issues/923)) ([dea6e92](https://github.com/iskron-ai/skills/commit/dea6e929a044beaf921141e8199445bb560b33f6))
+
 ## [8.16.8](https://github.com/iskron-ai/skills/compare/v8.16.7...v8.16.8) (2026-11-28)
 
 
