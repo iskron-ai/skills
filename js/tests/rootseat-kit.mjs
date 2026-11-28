@@ -32,7 +32,13 @@ import { PAT } from "./ownseat-kit.mjs";
 /** The bridge under probe, fixed at load: a probe that names another (none) does not leak into the next. */
 const BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 /** Variables a probe may set for one instance; every instance starts without them. */
-const PER_PROBE = ["ISKRON_ROOT_SEAT_MS", "ISKRON_ROOT_SEAT", "ISKRON_BRIDGE_LANG"];
+const PER_PROBE = [
+  "ISKRON_ROOT_SEAT_MS",
+  "ISKRON_ROOT_SEAT",
+  "ISKRON_BRIDGE_LANG",
+  "ISKRON_BRIDGE_IDLE_MS",
+  "ISKRON_BRIDGE_REAP_MS",
+];
 const SANDBOX = mkdtempSync(join(tmpdir(), "iskron-rootseat-"));
 const COPY = join(SANDBOX, "iskron.js");
 copyFileSync(process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, COPY);
@@ -50,6 +56,7 @@ if (!cp.spawn.__probe) {
   cp.spawn = function (...a) {
     const child = real.apply(this, a);
     if (a[1]?.[0] === BRIDGE) {
+      globalThis.__iskronProbeSpawned = (globalThis.__iskronProbeSpawned ?? 0) + 1;
       live.add(child);
       child.once("exit", () => live.delete(child));
     }
