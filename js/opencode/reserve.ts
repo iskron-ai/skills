@@ -70,6 +70,12 @@ export function reserveRoot(root: string, slots: Owner, home: Home | null): Rese
   return fresh;
 }
 
+/** The slot another instance owns for the root under a binding reservation, synchronously; none — null. */
+export function ownedElsewhere(root: string, slots: Owner): Slot | null {
+  const r = table().get(root);
+  return r?.owner && r.owner !== slots && r.slot && binds(r) ? r.slot : null;
+}
+
 /** The owner set its slot of the root: the waiting instances are served through it. */
 export function setSlot(r: Reservation, slot: Slot): void {
   r.slot = slot;

@@ -454,7 +454,7 @@ export async function setupTools(
   return {
     launch: launcher.launch,
     ...seats.half,
-    bridgeOf: (s) => [slots.get(s)].find((x) => x?.holding)?.bridge ?? null,
+    bridgeOf: (s) => holder.bridgeOf(s, slots), // a moved root's — its holder's (#11463)
     forget(s) {
       seats.cancel(s);
       forget(s, "end"); // a deleted session is the agent's end: its seat closes (#7493)

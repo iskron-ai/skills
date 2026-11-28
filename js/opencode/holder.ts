@@ -6,13 +6,22 @@
 // instance owning it serves the call — no second bridge, no second name. A seating in flight in
 // another instance is waited for first: two instances seating one root stand two seats.
 import { OPENCODE_KEEP, PLUGIN } from "../delivery/index.ts";
+import type { Bridge } from "../shared/bridge-client.ts";
 import { takingArgs } from "../shared/busyargs.ts";
 import { words } from "../shared/lang.ts";
 import { authDir, textOf } from "./bridge-io.ts";
 import type { Keeper } from "./keep.ts";
 import { writeLostMarker } from "./marker.ts";
 import type { Home } from "./records.ts";
-import { ownerSlot, type Reservation, reserveRoot, setSlot, unready, waitMs } from "./reserve.ts";
+import {
+  ownedElsewhere,
+  ownerSlot,
+  type Reservation,
+  reserveRoot,
+  setSlot,
+  unready,
+  waitMs,
+} from "./reserve.ts";
 import { heldAs } from "./rootseat-by.ts";
 import { STAND_TOOL } from "./satellite.ts";
 import type { Slot } from "./slot.ts";
@@ -106,6 +115,19 @@ export const keptStand = async (
   name === STAND_TOOL && slot.session === session
     ? alreadyStands(slot, session, args, foreign(slot, slots))
     : null;
+
+/**
+ * The bridge holding the session's seat, for its consumers here — the context gate, usage, the
+ * pulse, the rules: this instance's own holding slot, or for a ROOT the holding slot of the
+ * instance owning it (reserve.ts) — the one its writes go through. A child — only its own.
+ */
+export function bridgeOf(session: string, slots: Map<string, Slot>): Bridge | null {
+  const own = slots.get(session);
+  if (own?.holding) return own.bridge;
+  if (own?.child) return null;
+  const other = ownedElsewhere(session, slots);
+  return other?.holding && other.session === session ? other.bridge : null;
+}
 
 /** A call goes through the holder's slot: counted as its call, and known as not this instance's. */
 export function served(slot: Slot, touch: boolean): Slot {
