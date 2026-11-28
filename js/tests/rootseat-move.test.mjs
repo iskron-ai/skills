@@ -248,3 +248,16 @@ for (const live of [false, true])
       assert.deepEqual(await faults(x, live ? B : A, old, [old], r.calls[0]), [], KEPT);
     },
   );
+
+test("deletion after move while connect is in flight revokes the late seat", T, async (t) => {
+  const x = await underway(t);
+  x.ocA.move("root", x.b);
+  await sleep(100);
+  x.ocA.remove("root");
+  await x.s.fake.control({ connect_delay_ms: 0 });
+  await x.first.catch(() => {});
+  await sleep(3_500);
+  assert.ok(stood(x).length, "the delayed connect actually stood a seat");
+  assert.deepEqual(heardSeats(x.s.fake), [], "a deleted session leaves no listening seat");
+  assert.deepEqual(heldBy(x.s.dir, "root"), [], "a deleted session leaves no record");
+});

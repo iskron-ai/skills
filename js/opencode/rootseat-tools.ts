@@ -313,7 +313,7 @@ export function createSeatLife(d: Doors) {
           await last;
         } while (attempt?.explicit !== last);
         const to = d.movedTo?.(s);
-        if (to && slot.holding) return hand(s, slot, to, attempt);
+        if (to && slot.holding && !deleted.has(s)) return hand(s, slot, to, attempt);
         const owned = attempt?.owned;
         if (
           !owned ||
