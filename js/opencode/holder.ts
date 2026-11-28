@@ -18,6 +18,7 @@ import {
   ownerSlot,
   type Reservation,
   reserveRoot,
+  revived,
   setSlot,
   unready,
   waitMs,
@@ -75,11 +76,14 @@ export async function rootSlot(
     const r = reserveRoot(root, slots, home);
     if (r.owner === slots)
       try {
+        r.revive = () => own(r); // the owner's own path: it replaces a dead bridge
         return await own(r);
       } finally {
         unready(r, slots);
       }
-    const slot = await ownerSlot(r);
+    const got = await ownerSlot(r);
+    // A dead owner's bridge is revived by the owner's door, never called nor replaced here.
+    const slot = got?.bridge.failure ? await revived(r) : got;
     if (slot === null)
       throw new Error(words(OPENCODE_KEEP).rootElsewhere(Math.ceil(waitMs() / 1000)));
     if (slot) {

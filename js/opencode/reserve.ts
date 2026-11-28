@@ -25,6 +25,8 @@ export interface Reservation {
   open: () => void;
   /** Not opened by then — the reservation is free (a hand-over nobody took). */
   until: number;
+  /** The owner's own path to its slot of the root — it replaces a dead bridge; a waiter's door. */
+  revive?: (() => Promise<Slot>) | null;
 }
 
 const table = (): Map<string, Reservation> =>
@@ -40,6 +42,7 @@ function arm(r: Reservation, owner: Owner | null, to: Home | null, ms: number): 
   r.owner = owner;
   r.to = to;
   r.slot = null;
+  r.revive = null;
   r.until = Date.now() + ms;
   r.ready = new Promise<void>((done) => (r.open = done));
   return r;
@@ -62,7 +65,8 @@ export function reserveRoot(root: string, slots: Owner, home: Home | null): Rese
   if (r && binds(r) && !handedHere) return r;
   if (r && (handedHere || !r.slot)) {
     // Taken in place: the instances waiting for it wake when this owner sets its slot.
-    Object.assign(r, { owner: slots, to: null, slot: null, until: Date.now() + waitMs() });
+    const until = Date.now() + waitMs();
+    Object.assign(r, { owner: slots, to: null, slot: null, until, revive: null });
     return r;
   }
   const fresh = arm({ root } as Reservation, slots, null, waitMs());
@@ -142,6 +146,25 @@ export async function ownerSlot(r: Reservation): Promise<Slot | null | undefined
   clearTimeout(timer);
   if (late) return null;
   return r.owner && r.slot && r.owner.get(r.root) === r.slot ? r.slot : undefined;
+}
+
+/**
+ * The owner's slot came with a dead bridge: the waiter asks the owner's own door to replace it,
+ * once, within the root wait — the revived live slot, or null (no door, failed, late): the
+ * caller refuses, no bridge of its own.
+ */
+export async function revived(r: Reservation): Promise<Slot | null> {
+  const door = r.revive;
+  if (!door) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const slot = await Promise.race([
+    door().catch(() => null),
+    new Promise<null>((done) => {
+      timer = setTimeout(() => done(null), waitMs());
+    }),
+  ]);
+  clearTimeout(timer);
+  return slot && !slot.bridge.failure && r.slot === slot ? slot : null;
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
