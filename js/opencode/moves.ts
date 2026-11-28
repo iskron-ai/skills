@@ -70,7 +70,7 @@ export function createMoves(ctx: Context, say: Say) {
     }
     return ours(sessionID);
   };
-  const left = new Set<string>(); // roots moved from here to another folder
+  const left = new Map<string, Home>(); // roots moved from here to another folder: the folder each went to
   /** The session moved to location to. */
   function moved(d: MoveDoors, s: string, to: Home | null): void {
     if (!home || !to?.directory || d.slots.get(s)?.child) return;
@@ -82,7 +82,7 @@ export function createMoves(ctx: Context, say: Say) {
       d.say(W.movedAway(s, to.directory), "info");
       // Children do not move with the parent (OpenCode, observed): a satellite child keeps its own
       // bridge, seat and errand here, in its own folder's instance (#8991); only the root's goes.
-      left.add(s);
+      left.set(s, to);
       // The root's seat waits for its session in the new folder: an announced absence, not a death (#7493).
       return d.forget(s, "away");
     }
@@ -122,7 +122,20 @@ export function createMoves(ctx: Context, say: Say) {
   /** A refusal to stand as a satellite of a root in another directory the process does not hold — for now. */
   const farRefusal = async (root: string | null): Promise<string | null> =>
     root && (await farRoot(root)) === "foreign" ? W.farRefusal() : null;
-  return { home, directoryOf, exists, ours, canReturn, moved, relay, guard, farRoot, farRefusal };
+  return {
+    home,
+    directoryOf,
+    exists,
+    ours,
+    canReturn,
+    moved,
+    relay,
+    guard,
+    farRoot,
+    farRefusal,
+    /** The folder the root moved to; null — it is here. */
+    movedTo: (s: string): Home | null => left.get(s) ?? null,
+  };
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */

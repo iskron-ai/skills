@@ -41,6 +41,8 @@ export interface OpencodeKeepWords {
   thisSession: () => string;
   seatLost: (key: string, dir: string, why: string) => string;
   movedAway: (session: string, dir: string) => string;
+  /** Явный stand того же графа и роли через экземпляр, не держащий место сессии: держащий отвечает за него. */
+  alreadyStanding: (name: string, realm: string, karta: string) => string;
   takenFromNew: (session: string) => string;
   parentMoved: () => string;
   farRefusal: () => string;
@@ -106,6 +108,9 @@ export const OPENCODE_KEEP: Readonly<Record<Lang, OpencodeKeepWords>> = {
       `выгружен и не поднялся (${why}). Верни место: iskron_stand.`,
     movedAway: (session, dir) =>
       `Искрон: сессия ${session} перенесена в ${dir} — её место отпускаю экземпляру той папки`,
+    alreadyStanding: (name, realm, karta) =>
+      `Искрон: сессия уже стоит как ${name} — место ${realm}, роль ${karta} держит экземпляр плагина той папки, где сессия теперь; ` +
+      "нового места этот вызов не занимает. Свои ходы — дальше от этого имени.",
     takenFromNew: (session) =>
       `Искрон: место сессии ${session} занято из её новой папки — она перенесена`,
     parentMoved: () =>
@@ -194,6 +199,9 @@ export const OPENCODE_KEEP: Readonly<Record<Lang, OpencodeKeepWords>> = {
       `was unloaded and did not come up (${why}). Return the seat: iskron_stand.`,
     movedAway: (session, dir) =>
       `Iskron: session ${session} was moved to ${dir} — releasing its seat to that folder's instance`,
+    alreadyStanding: (name, realm, karta) =>
+      `Iskron: the session already stands as ${name} — the seat ${realm}, role ${karta}, is held by the plugin instance of the folder the session lives in now; ` +
+      "this call takes no new seat. Go on from this name.",
     takenFromNew: (session) =>
       `Iskron: the seat of session ${session} was taken from its new folder — it was moved`,
     parentMoved: () =>

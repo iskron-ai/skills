@@ -24,6 +24,7 @@ import { readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
+import { forgetSessions } from "./opencode-kit.mjs";
 import { setup, until } from "./ownseat-kit.mjs";
 import { heardSeats, heldBy, rootPlugin, writeAgents } from "./rootseat-kit.mjs";
 
@@ -48,31 +49,6 @@ const markers = (dir) =>
 const KEPT =
   "the contract after the move — one seat of the role under the name the root stood, no other name stood, one record of the session, every write signed by it";
 
-/**
- * The process's registries by session id (opencode/halts.ts, twins.ts, …) are shared by the
- * live plugin instances by design, and every test's session is "root": a former test's stop
- * must not ban the next (opencode-kit.mjs clears ten of them before each of its probes).
- */
-const SHARED = [
-  "Ended",
-  "EndLiftedAt",
-  "Halts",
-  "LiftedAt",
-  "StopIds",
-  "StopWords",
-  "StopAlone",
-  "StopFull",
-  "ArchivedStops",
-  "ReplyNotes",
-  "Handing",
-  "Twins",
-];
-const forgetSessions = () => {
-  for (const k of SHARED) globalThis[`__iskron${k}`]?.clear?.();
-  globalThis.__iskronArchiveQueue?.turns.clear();
-  globalThis.__iskronArchiveQueue?.updating.clear();
-};
-
 /** The stand: A — the main copy of a repository, B — a worktree of it, both with the cover. */
 async function stand(t) {
   const up = []; // the plugin instances, stopped before setup's cleanup looks for bridges
@@ -81,7 +57,7 @@ async function stand(t) {
   });
   // the move's timings are the code's defaults here, whatever the machine's environment holds
   for (const k of ["ISKRON_MOVE_ADOPT_MS", "ISKRON_RESUME_PATIENCE_MS"]) delete process.env[k];
-  forgetSessions();
+  forgetSessions(true);
   const s = await setup(t);
   s.fake.state.tools = ["iskron_orient", WRITE.tool, "iskron_channel", STAND.tool].map((name) => ({
     name,
@@ -244,14 +220,13 @@ test(
     const x = await seated(t);
     await liveIn(x);
     await moved(x);
-    const { error } = await call(x, x.ocA, STAND);
-    const own = stood(x).at(-1); // the explicit stand's seat: the last the session's bridges stood
+    const { error, content } = await call(x, x.ocA, STAND);
     assert.ok(
-      !error && own !== x.old,
-      `the explicit stand through the old folder's instance stood a seat of its own\n${error ?? ""}`,
+      !error && content.includes(x.old),
+      `the holder answers with ${x.old}: ${error ?? content}`,
     );
     await sleep(1_000); // the new folder's instance takes the news of its seat; then it serves the session
-    assert.deepEqual(await serving(x, own, [x.old, own]), [], KEPT);
+    assert.deepEqual(await serving(x, x.old, [x.old]), [], KEPT);
   },
 );
 
