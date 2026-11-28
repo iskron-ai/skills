@@ -80,6 +80,33 @@ export function ownedElsewhere(root: string, slots: Owner): Slot | null {
 export function setSlot(r: Reservation, slot: Slot): void {
   r.slot = slot;
   r.open();
+  // A dead bridge's replacement dropped the reservation with the old slot a moment ago.
+  if (!table().has(r.root)) table().set(r.root, r);
+}
+
+/**
+ * The owner dropped its slot of the root: the reservation goes with it — the slot is its
+ * generation, so an old owner's or an old slot's drop never erases a newer reservation.
+ */
+function release(root: string, slots: Owner, slot: Slot): void {
+  const r = table().get(root);
+  if (r?.owner === slots && r.slot === slot) table().delete(root);
+}
+
+/**
+ * An instance's slots: every drop — the reaper, a session's end, a move, the instance's stop —
+ * releases the root's reservation it was the generation of (the table holds no dropped slot).
+ */
+export class OwnedSlots extends Map<string, Slot> {
+  override delete(key: string): boolean {
+    const slot = this.get(key);
+    const had = super.delete(key);
+    if (slot) release(key, this, slot);
+    return had;
+  }
+  override clear(): void {
+    for (const key of [...this.keys()]) this.delete(key);
+  }
 }
 
 /** The owner's call ended without a slot of the root: the reservation is free. */
@@ -94,8 +121,10 @@ export function unready(r: Reservation, slots: Owner): void {
 export function handRoot(root: string, slots: Owner, to: Home, live: boolean): void {
   const r = table().get(root);
   if (r?.owner !== slots) return;
-  if (live) arm(r, null, to, 2 * waitMs());
-  else table().delete(root);
+  if (!live) return void table().delete(root);
+  arm(r, null, to, 2 * waitMs());
+  const untaken = () => table().get(root) === r && !r.owner && Date.now() >= r.until;
+  setTimeout(() => untaken() && table().delete(root), 2 * waitMs()).unref?.();
 }
 
 /**

@@ -34,7 +34,7 @@ import { type PutDown } from "./putdown.ts";
 import { startReaper } from "./reaper.ts";
 import { revokeAsLauncher } from "./release.ts";
 import { toldAside, wireNotes } from "./replynotes.ts";
-import { type Reservation } from "./reserve.ts";
+import { OwnedSlots, type Reservation } from "./reserve.ts";
 import { canonOf, type SeatAnswer } from "./rootseat-by.ts";
 import { createSeatLife, explicitHeld } from "./rootseat-tools.ts";
 import { childWriteRefusal, createRunEnds, declaresAction, readsOnly } from "./runends.ts";
@@ -72,7 +72,7 @@ export async function setupTools(
   const hostEnv = await hostEnvOf(ctx); // OpenCode's version and the set's root — once per plugin
   await wireNotes(ctx); // the plugin's own words ride the next tool reply (replynotes.ts)
 
-  const slots = new Map<string, Slot>();
+  const slots = new OwnedSlots(); // a dropped root's slot takes its reservation along (reserve.ts)
   const unasked = new WeakSet<Slot>(); // a root's slot that has not asked for its seat from disk yet
   let spare: Slot | null = null;
   let stopped = false;
