@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.16.8](https://github.com/iskron-ai/skills/compare/v8.16.7...v8.16.8) (2026-11-28)
+
+
+### Bug Fixes
+
+* **skills:** chief-of-staff reads the live seats of the account across graphs, never the seat archive ([#921](https://github.com/iskron-ai/skills/issues/921)) ([bd54f9c](https://github.com/iskron-ai/skills/commit/bd54f9c38987870fc72d831db78d084b15626c3e))
+
 ## [8.16.7](https://github.com/iskron-ai/skills/compare/v8.16.6...v8.16.7) (2026-11-27)
 
 
