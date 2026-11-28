@@ -111,7 +111,9 @@ test("a login the background could not publish is published on its next tick", a
     await pause(1000);
     assert.equal(published(dir) - logins, 0, "nothing to publish with while discovery is down");
     await fake.control({ discoveryStatus: null });
-    await waitFor(() => !!lock(dir)?.authorize_url, "the login, once discovery answers", 3000);
+    // The bridge writes the login's record, then its line in the grant log: both are the login.
+    const out = () => !!lock(dir)?.authorize_url && published(dir) > logins;
+    await waitFor(out, "the login, once discovery answers", 3000);
     assert.equal(published(dir) - logins, 1, "one login");
   });
 });
